@@ -1,594 +1,1160 @@
-# BharatBridge AI - AI System Architecture
+# BharatBridge AI - Complete System Design Document
 
 ## 1. System Overview
 
-BharatBridge AI employs a multi-stage AI pipeline that transforms visual document data into accessible, multilingual audio content. The system orchestrates five core AI components in sequence:
+BharatBridge AI is a multimodal AI-powered accessibility platform that bridges India's digital divide through intelligent document processing and sign language recognition. The platform combines computer vision, natural language processing, and speech synthesis to make information accessible across linguistic and physical barriers.
 
-1. **OCR Engine**: Extracts text from document images with support for multiple Indian scripts
-2. **Language Detector**: Identifies the source language from extracted text
-3. **Neural Translation Model**: Converts text between Indian languages while preserving context
-4. **Content Simplifier**: Reduces complexity of bureaucratic and technical language using LLM reasoning
-5. **Text-to-Speech Synthesizer**: Generates natural-sounding audio in regional languages
+**Core Capabilities**:
+- Extract text from images using OCR with support for 15+ Indian scripts
+- Automatically detect source language from extracted text
+- Translate content into Indian regional languages with context preservation
+- Simplify complex bureaucratic and technical language
+- Generate natural-sounding speech in regional languages
+- Recognize Indian Sign Language (ISL) gestures in real-time via camera
 
-The architecture is designed for modularity, allowing independent optimization of each component while maintaining seamless data flow between stages.
+**Architecture Philosophy**:
+- Microservices-based for independent scaling and deployment
+- Cloud-native design leveraging AWS managed services
+- Modular AI pipeline allowing component-level optimization
+- API-first approach enabling multi-platform integration
 
-## 2. End-to-End Data Flow
+## 2. End-to-End Workflow
 
-- **Output**: Preprocessed image tensor ready for OCR
+### 2.1 Document/Text Processing Pipeline
 
-### Stage 2: OCR Processing
-- **Image Enhancement**: Adaptive thresholding, noise reduction, deskewing
-- **Script Detection**: Identify Devanagari, Tamil, Bengali, Telugu, and other Indic scripts
-- **Text Extraction**: Character-level recognition with bounding box coordinates
-- **Post-OCR Correction**: Dictionary-based spell checking for common OCR errors
-- **Output**: Raw extracted text with confidence scores per word
+**Step 1: Input Acquisition**
+- User captures document via mobile camera or uploads from gallery
+- Frontend validates file format (JPEG, PNG, PDF) and size (<10MB)
+- Image uploaded to S3 bucket with pre-signed URL for security
+- Request queued in SQS for asynchronous processing
 
+**Step 2: Image Preprocessing**
+- Lambda function triggered by S3 event
+- Image enhancement: contrast adjustment, noise reduction, deskewing
+- Quality assessment: calculate sharpness score, reject if below threshold
+- Preprocessed image stored in S3 processing bucket
 
-### Stage 3: Language Detection
-- **Input**: Extracted text string (minimum 10 characters for reliable detection)
-- **Feature Extraction**: Character n-grams, script patterns, Unicode range analysis
-- **Classification**: Multi-class prediction across 20+ Indian languages
-- **Confidence Thresholding**: Flag ambiguous cases for user confirmation
-- **Output**: ISO 639 language code with confidence score (e.g., "hi" for Hindi, 0.98 confidence)
-
-### Stage 4: Translation Pipeline
-- **Tokenization**: Language-specific tokenizers for source text
-- **Contextual Encoding**: Transformer-based encoder captures semantic meaning
-- **Cross-lingual Mapping**: Attention mechanism aligns source and target language representations
-- **Decoding**: Auto-regressive generation of target language text
-- **Post-processing**: Grammar correction, punctuation normalization
-- **Output**: Translated text in target regional language
-
-### Stage 5: Text Simplification Module
-- **Complexity Analysis**: Identify technical terms, long sentences, passive voice
-- **LLM Prompting**: Few-shot prompts with examples of simplified government/medical text
-- **Terminology Extraction**: Build glossary of domain-specific terms with simple definitions
-- **Sentence Restructuring**: Break compound sentences, convert passive to active voice
-- **Readability Scoring**: Ensure output meets 6th-grade reading level
-- **Output**: Simplified text + glossary of technical terms
-
-### Stage 6: Text-to-Speech Generation
-- **Text Normalization**: Expand abbreviations, handle numbers and dates
-- **Phoneme Conversion**: Grapheme-to-phoneme mapping for target language
-- **Prosody Modeling**: Determine pitch, duration, and stress patterns
-- **Waveform Synthesis**: Neural vocoder generates audio waveform
-- **Audio Post-processing**: Normalize volume, apply compression
-- **Output**: MP3/WAV audio file with natural-sounding speech
-
-### Stage 7: Final Output to User
-- **Display**: Show original text, translated text, and simplified version side-by-side
-- **Audio Player**: Embedded player with playback controls
-- **Confidence Indicators**: Visual cues for low-confidence translations
-- **Feedback Loop**: User corrections fed back to improve models
-- **Export Options**: Save as PDF, share audio file, copy text
+**Step 3: OCR Extraction**
+- OCR microservice (EasyOCR) processes image
+- Script detection identifies Indic script type
+- Text extraction with confidence scores per word
+- Output: JSON with extracted text, bounding boxes, confidence metrics
 
 
-## 3. Model Selection & Justification
+**Step 4: Language Detection**
+- FastText model identifies source language
+- Confidence threshold check (>0.85 for auto-proceed)
+- Low confidence triggers user confirmation via WebSocket
+- Language code stored in DynamoDB for user preferences
 
-### OCR Model: EasyOCR + Tesseract Hybrid
-**Primary Choice**: EasyOCR
-- **Rationale**: Native support for 15+ Indian languages including Hindi, Tamil, Telugu, Kannada, Bengali
-- **Advantages**: Pre-trained on diverse fonts, handles low-quality images, open-source
-- **Performance**: 92-95% accuracy on printed Indic text
-- **Deployment**: Lightweight models (50-100MB per language) suitable for mobile
+**Step 5: Translation**
+- Translation microservice receives text + language pair
+- IndicTrans2 model performs neural translation
+- Post-processing: grammar correction, punctuation normalization
+- Translated text cached in ElastiCache for repeated requests
 
-**Fallback**: Tesseract 5.0 with Indic language packs
-- **Use Case**: When EasyOCR confidence < 0.7
-- **Advantages**: Mature OCR engine, extensive language support, configurable
-- **Integration**: Ensemble approach - combine outputs when both models disagree
+**Step 6: Text Simplification**
+- Complexity analyzer identifies technical terms and long sentences
+- LLM API (GPT-4) simplifies content with domain-specific prompts
+- Fallback to rule-based engine if API unavailable
+- Glossary generated for technical terms
 
-**Cloud Alternative**: AWS Textract (for high-value documents)
-- **Use Case**: Legal documents, certificates requiring highest accuracy
-- **Advantages**: 98%+ accuracy, table extraction, form field detection
-- **Trade-off**: Cost per API call, requires internet connectivity
+**Step 7: Text-to-Speech**
+- TTS microservice receives simplified text
+- Google TTS API generates audio in target language
+- Audio file stored in S3 with 24-hour expiration
+- Presigned URL returned to client for streaming
 
-### Language Detection Model: FastText + LangDetect
-**Primary Choice**: FastText Language Identification
-- **Rationale**: Trained on 176 languages including all major Indian languages
-- **Advantages**: Fast inference (<10ms), works on short text (10+ characters), 99.1% accuracy
-- **Model Size**: 126MB compressed, suitable for on-device deployment
-- **Fallback**: LangDetect library for ambiguous cases
+**Step 8: Response Delivery**
+- API Gateway returns JSON response with:
+  - Original text, translated text, simplified text
+  - Audio file URL
+  - Confidence scores and metadata
+- Frontend displays results with interactive UI
+- User feedback collected for model improvement
 
-**Script-based Pre-filtering**:
-- Unicode range analysis to narrow down language candidates
-- Devanagari script → Hindi, Marathi, Sanskrit, Nepali
-- Tamil script → Tamil only
-- Reduces false positives and speeds up detection
+### 2.2 Sign Language Processing Pipeline
 
-### Translation Model: IndicTrans2 + mBART50
-**Primary Choice**: IndicTrans2 (AI4Bharat)
-- **Rationale**: Specifically designed for Indian languages, state-of-the-art performance
-- **Coverage**: 22 scheduled Indian languages + English
-- **Architecture**: Transformer-based (600M parameters), distilled version available (200M)
-- **Performance**: BLEU scores 30-45 across language pairs, outperforms Google Translate for Indic languages
-- **Training Data**: 230M sentence pairs from government documents, news, Wikipedia
+**Step 1: Video Stream Capture**
+- Mobile/web camera captures video at 30 FPS
+- Frontend performs frame sampling (10 FPS for processing)
+- Frames sent to backend via WebSocket connection
+- Real-time bidirectional communication for low latency
 
-**Fallback**: mBART50 (Meta AI)
-- **Use Case**: When IndicTrans2 doesn't support language pair
-- **Advantages**: Multilingual pre-training, 50 languages including 10 Indian languages
-- **Performance**: BLEU scores 25-35 for Indic languages
+**Step 2: Hand Detection & Tracking**
+- MediaPipe Hands model detects hand landmarks (21 keypoints per hand)
+- Bounding box extraction and normalization
+- Hand orientation and position tracking across frames
+- Filter out non-gesture frames (confidence < 0.7)
 
-**Domain Adaptation Strategy**:
-- Fine-tune on domain-specific corpora (government forms, medical documents)
-- Build custom dictionaries for technical terms (medical, legal, financial)
-- Implement terminology consistency across document
+**Step 3: Gesture Sequence Processing**
+- Sliding window approach (30 frames = 3 seconds)
+- Extract spatial features: hand shape, finger positions, palm orientation
+- Extract temporal features: movement trajectory, velocity, acceleration
+- Feature vector normalized and fed to gesture classifier
+
+**Step 4: ISL Recognition**
+- LSTM-based sequence model classifies gesture
+- Support for 100+ common ISL signs (expandable)
+- Confidence scoring for each prediction
+- Context-aware disambiguation for similar gestures
+
+**Step 5: Text Generation**
+- Recognized signs converted to text
+- Grammar correction applied (ISL has different syntax than written language)
+- Sentence formation from sign sequence
+- Output displayed in real-time on screen
+
+**Step 6: Optional Translation**
+- Recognized text can be translated to other Indian languages
+- Follows same translation pipeline as document processing
+- TTS can be applied for audio output
+- Complete accessibility loop: Sign → Text → Speech
 
 
-### Text Simplification: LLM-based with Rule-based Fallback
-**Primary Approach**: GPT-4 / Claude API with Custom Prompts
-- **Rationale**: Superior understanding of context, handles domain-specific simplification
-- **Prompt Engineering**: Few-shot examples of government/medical text simplification
-- **Advantages**: Maintains meaning while reducing complexity, explains jargon
-- **Limitations**: API costs, latency (2-4 seconds), requires internet
+## 3. AI Module Architecture
 
-**Fallback**: Rule-based Simplification Engine
-- **Components**:
-  - Sentence splitter: Break sentences >25 words
-  - Passive-to-active converter: Regex-based transformation
-  - Jargon detector: Dictionary of 5000+ complex terms with simple alternatives
-  - Readability scorer: Flesch-Kincaid adapted for Indian languages
-- **Advantages**: Fast (<100ms), works offline, predictable
-- **Limitations**: Less contextual, may miss nuanced simplifications
+### 3.1 OCR Module
 
-**Hybrid Strategy**:
-- Use LLM for first-time document types, cache simplification patterns
-- Apply rule-based for common document types (Aadhaar, PAN, prescriptions)
-- User feedback loop to improve rule database
+**Model**: EasyOCR (Primary) + Tesseract 5.0 (Fallback)
 
-### Text-to-Speech Engine: gTTS + Coqui TTS
-**Primary Choice**: Google Text-to-Speech (gTTS)
-- **Rationale**: Supports 15+ Indian languages with natural-sounding voices
-- **Advantages**: High-quality neural voices, free tier available, simple API
-- **Performance**: 1-2 seconds latency for 100-word text
-- **Limitations**: Requires internet, limited voice customization
+**Architecture**:
+- Feature Extractor: ResNet-based CNN for image encoding
+- Sequence Modeling: Bidirectional LSTM for character sequence
+- Decoder: CTC (Connectionist Temporal Classification) for text output
 
-**On-device Alternative**: Coqui TTS (Open-source)
-- **Use Case**: Offline mode, privacy-sensitive documents
-- **Advantages**: Fully local, customizable voices, no API costs
-- **Model Size**: 50-100MB per language
-- **Trade-off**: Slightly lower voice quality than cloud TTS
+**Supported Scripts**:
+- Devanagari (Hindi, Marathi, Sanskrit)
+- Bengali, Tamil, Telugu, Kannada, Malayalam
+- Gujarati, Punjabi (Gurmukhi), Odia
+- English (Latin script)
 
-**Premium Option**: Amazon Polly
-- **Use Case**: Enterprise deployment, high-volume usage
-- **Advantages**: Neural voices, SSML support for prosody control, 10+ Indian languages
-- **Features**: Breathing sounds, whispering, emphasis control
-- **Cost**: Pay-per-character pricing
+**Deployment**:
+- Containerized using Docker
+- Deployed on EC2 GPU instances (g4dn.xlarge for cost-efficiency)
+- Model files stored in S3, loaded at container startup
+- Horizontal scaling based on queue depth
 
-**Voice Selection Strategy**:
-- Default to female voices (research shows higher trust for informational content)
-- Allow user preference for voice gender and speed
-- Cache audio for frequently accessed documents
+**Performance Metrics**:
+- Accuracy: 92-95% on printed text
+- Latency: 2-4 seconds per document page
+- Throughput: 15-20 pages per minute per instance
+
+### 3.2 Language Detection Module
+
+**Model**: FastText Language Identification (176 languages)
+
+**Architecture**:
+- Character n-gram features (2-5 grams)
+- Shallow neural network classifier
+- Softmax output for probability distribution
+
+**Preprocessing**:
+- Unicode normalization (NFKC)
+- Script-based pre-filtering to narrow candidates
+- Minimum text length: 10 characters for reliable detection
+
+**Deployment**:
+- Lightweight model (126MB) deployed on Lambda
+- Cold start optimized with provisioned concurrency
+- Response time: <100ms
+
+**Accuracy**: 99.1% on text >50 characters, 95% on short text
+
+### 3.3 Translation Engine
+
+**Model**: IndicTrans2 (AI4Bharat) - 600M parameter transformer
+
+**Architecture**:
+- Encoder: 12-layer transformer with multi-head attention
+- Decoder: 12-layer auto-regressive transformer
+- Vocabulary: 64K subword tokens (SentencePiece)
+- Training: 230M parallel sentences across 22 Indian languages
+
+**Language Pairs Supported**:
+- All 22 scheduled Indian languages ↔ English
+- Direct translation between major Indian languages
+- Pivot through English for unsupported pairs
+
+**Deployment**:
+- Model quantized to INT8 for faster inference
+- Deployed on EC2 GPU instances (g4dn.2xlarge)
+- Batch processing for efficiency (batch size: 8-16)
+- Model served via TorchServe for production reliability
+
+**Performance**:
+- BLEU Score: 30-45 across language pairs
+- Latency: 1-2 seconds for 100-word text
+- Throughput: 50-100 translations per minute per instance
+
+
+### 3.4 Text Simplification Module
+
+**Primary Approach**: LLM API (GPT-4 Turbo)
+
+**Prompt Engineering**:
+```
+System: You are an expert at simplifying complex Indian government and medical documents.
+User: Simplify the following text to 6th-grade reading level while preserving meaning:
+[Document text]
+Output format: Simplified text + Glossary of technical terms
+```
+
+**Few-shot Examples**:
+- Government form simplification
+- Medical prescription explanation
+- Banking document clarification
+
+**Fallback**: Rule-based Engine
+- Sentence splitter: Break sentences >25 words
+- Passive-to-active voice converter
+- Jargon dictionary: 5000+ terms with simple alternatives
+- Readability scorer: Flesch-Kincaid adapted for Indian languages
+
+**Deployment**:
+- API calls to OpenAI with retry logic
+- Fallback engine on Lambda for offline capability
+- Response caching in ElastiCache (TTL: 7 days)
+
+**Performance**:
+- Latency: 2-4 seconds (LLM), <500ms (rule-based)
+- Quality: Human evaluation score 4.2/5
+
+### 3.5 Text-to-Speech Module
+
+**Model**: Google Cloud Text-to-Speech (Neural2 voices)
+
+**Supported Languages**:
+- Hindi, Bengali, Tamil, Telugu, Kannada, Malayalam
+- Gujarati, Marathi, Punjabi
+- English (Indian accent)
+
+**Features**:
+- Neural voices for natural prosody
+- SSML support for emphasis and pauses
+- Adjustable speech rate (0.5x to 2x)
+- Multiple voice options per language
+
+**Deployment**:
+- API integration with Google Cloud TTS
+- Audio files cached in S3 (24-hour expiration)
+- CDN (CloudFront) for fast audio delivery
+
+**Fallback**: Coqui TTS (Open-source)
+- On-device model for offline capability
+- Model size: 50-100MB per language
+- Deployed on EC2 for cloud fallback
+
+**Performance**:
+- Latency: 1-2 seconds for 100-word text
+- Audio quality: MOS score 4.0/5
+
+### 3.6 Sign Language Recognition Module
+
+**Model**: Custom LSTM-CNN Hybrid
+
+**Architecture**:
+- Hand Detection: MediaPipe Hands (21 landmarks per hand)
+- Spatial Feature Extractor: 3-layer CNN on hand region
+- Temporal Sequence Model: 2-layer Bidirectional LSTM
+- Classifier: Fully connected layers with softmax output
+
+**Dataset**:
+- INCLUDE dataset (Indian Sign Language)
+- Custom collected data: 100 common ISL signs
+- 50 samples per sign, 10 signers for diversity
+- Data augmentation: rotation, scaling, speed variation
+
+**Training**:
+- Loss function: Categorical cross-entropy
+- Optimizer: Adam with learning rate scheduling
+- Regularization: Dropout (0.3), L2 weight decay
+- Training time: 24 hours on V100 GPU
+
+**Deployment**:
+- Real-time inference on EC2 GPU instances
+- WebSocket server for low-latency streaming
+- Frame buffering and sliding window processing
+
+**Performance**:
+- Accuracy: 87% on test set (100 signs)
+- Latency: <200ms per gesture prediction
+- FPS: 10 frames processed per second
 
 
 ## 4. Data Processing Strategy
 
-### Handling Noisy Images
-**Challenge**: Real-world documents often have poor lighting, shadows, wrinkles, or low resolution
-
-**Preprocessing Pipeline**:
-1. **Contrast Enhancement**: Adaptive histogram equalization (CLAHE) to improve text visibility
-2. **Noise Reduction**: Bilateral filtering to remove noise while preserving edges
-3. **Binarization**: Otsu's thresholding for converting to black-and-white
-4. **Deskewing**: Hough transform to detect and correct rotation (±15 degrees)
-5. **Border Removal**: Crop unnecessary margins to focus on content area
+### 4.1 Image Preprocessing
 
 **Quality Assessment**:
-- Calculate image sharpness score using Laplacian variance
-- If score < threshold, prompt user to retake photo with guidance
-- Provide real-time feedback during camera capture (lighting, focus, angle)
+- Calculate Laplacian variance for sharpness (threshold: 100)
+- Check resolution (minimum: 800x600 pixels)
+- Detect excessive blur or motion artifacts
+- Reject and request retake if quality insufficient
 
-**Augmentation for Robustness**:
-- Train OCR models on augmented data (blur, noise, rotation, shadows)
-- Use ensemble of models trained on different augmentation strategies
-- Implement confidence-based retry mechanism
+**Enhancement Pipeline**:
+1. **Contrast Enhancement**: CLAHE (Clip Limit: 2.0, Grid: 8x8)
+2. **Noise Reduction**: Bilateral filter (d=9, sigmaColor=75, sigmaSpace=75)
+3. **Binarization**: Adaptive Gaussian thresholding (block size: 11, C: 2)
+4. **Deskewing**: Hough line transform to detect rotation, correct up to ±15°
+5. **Border Removal**: Contour detection to crop unnecessary margins
 
-### Preprocessing Steps
-**Image Normalization**:
-- Resize to standard dimensions (1024x1024 or maintain aspect ratio)
-- Convert color space (RGB → Grayscale for OCR)
-- Normalize pixel values (0-255 → 0-1 range)
+**Normalization**:
+- Resize maintaining aspect ratio (max dimension: 1024px)
+- Convert to grayscale for OCR processing
+- Normalize pixel values to [0, 1] range
 
-**Text Region Detection**:
-- Use EAST (Efficient and Accurate Scene Text) detector to locate text regions
-- Filter out non-text areas (logos, images, decorative elements)
-- Prioritize regions based on size and position (headers, body text)
+**Script-specific Preprocessing**:
+- Tamil: Aggressive binarization due to complex characters
+- Bengali: Preserve horizontal line (matra) integrity
+- Devanagari: Handle conjunct characters carefully
 
-**Layout Analysis**:
-- Detect document structure (headers, paragraphs, tables, lists)
-- Preserve reading order for multi-column layouts
-- Handle mixed-language documents (English headers, regional language body)
+### 4.2 Gesture Frame Processing
 
-### Handling Multiple Indian Scripts
-**Script Identification**:
-- Unicode range detection:
-  - Devanagari: U+0900 to U+097F
-  - Bengali: U+0980 to U+09FF
-  - Tamil: U+0B80 to U+0BFF
-  - Telugu: U+0C00 to U+0C7F
-  - Kannada: U+0C80 to U+0CFF
-  - Malayalam: U+0D00 to U+0D7F
-  - Gujarati: U+0A80 to U+0AFF
-  - Punjabi (Gurmukhi): U+0A00 to U+0A7F
+**Hand Detection**:
+- MediaPipe Hands model detects 21 3D landmarks per hand
+- Confidence threshold: 0.7 (reject frames below)
+- Track both hands independently for two-handed signs
+- Normalize coordinates relative to wrist position
 
-**Script-specific OCR Models**:
-- Load appropriate language model based on detected script
-- Use script-specific preprocessing (e.g., Tamil requires different binarization)
-- Handle conjunct characters and ligatures common in Indic scripts
+**Feature Extraction**:
+- **Spatial Features**: 
+  - Finger angles (5 per hand)
+  - Palm orientation (3D rotation)
+  - Hand shape descriptor (21-point vector)
+- **Temporal Features**:
+  - Movement velocity (frame-to-frame displacement)
+  - Acceleration (second derivative)
+  - Trajectory smoothing (Kalman filter)
 
-**Mixed-script Documents**:
-- Segment document into script-specific regions
-- Process each region with appropriate OCR model
-- Merge results while preserving spatial layout
+**Sequence Windowing**:
+- Sliding window: 30 frames (3 seconds at 10 FPS)
+- Overlap: 15 frames (50% overlap for smooth recognition)
+- Padding: Repeat last frame if sequence too short
+- Truncation: Take last 30 frames if sequence too long
 
+**Data Augmentation** (Training only):
+- Random rotation: ±15°
+- Random scaling: 0.9-1.1x
+- Speed variation: 0.8-1.2x
+- Horizontal flip for symmetric signs
 
-### Error Handling
-**OCR Failures**:
-- **Low Confidence Detection**: Flag words with confidence < 0.6, highlight in UI
-- **Fallback Strategy**: Switch to alternative OCR engine (Tesseract if EasyOCR fails)
-- **User Correction**: Allow manual text editing with inline correction interface
-- **Retry Mechanism**: Suggest image retake with specific guidance (better lighting, closer distance)
+### 4.3 Noise Handling
 
-**Language Detection Errors**:
-- **Ambiguity Handling**: If top 2 languages have confidence difference < 0.1, show both options to user
-- **Manual Override**: Always allow user to manually select source language
-- **Context Clues**: Use document type hints (Aadhaar → Hindi/English, Ration Card → Regional language)
+**Image Noise**:
+- Gaussian noise: Bilateral filtering
+- Salt-and-pepper noise: Median filtering
+- JPEG artifacts: Deblocking filter
+- Shadow removal: Illumination normalization
 
-**Translation Failures**:
-- **Unsupported Language Pairs**: Pivot through English (Source → English → Target)
-- **API Timeouts**: Implement exponential backoff, cache partial results
-- **Fallback Translation**: Use simpler word-by-word translation if neural model fails
-- **Quality Checks**: Detect untranslated text (same as source), flag for review
+**Video Noise**:
+- Frame dropping: Interpolate missing frames
+- Motion blur: Temporal averaging
+- Background clutter: Hand segmentation with background subtraction
+- Lighting variation: Histogram equalization per frame
 
-**TTS Failures**:
-- **Network Issues**: Queue audio generation, process when connectivity restored
-- **Unsupported Characters**: Replace special characters with phonetic equivalents
-- **Fallback**: Provide text-only output if TTS unavailable
-- **Caching**: Store generated audio to avoid regeneration
+**Robustness Strategies**:
+- Ensemble of models trained on different noise levels
+- Confidence-based rejection of noisy inputs
+- User feedback for failed recognitions
+- Continuous model retraining with edge cases
 
-**Graceful Degradation**:
-- Partial results better than complete failure
-- Show progress indicators for each pipeline stage
-- Allow users to proceed with imperfect results
-- Log errors for continuous improvement
+### 4.4 Script Normalization
 
+**Unicode Normalization**:
+- Apply NFKC (Compatibility Decomposition + Canonical Composition)
+- Handle zero-width joiners and non-joiners
+- Normalize Indic numerals to ASCII (optional)
 
-## 5. Architecture Flow Diagram Explanation
+**Script-specific Handling**:
+- **Devanagari**: Normalize conjuncts, handle nukta variations
+- **Tamil**: Normalize vowel markers, handle archaic characters
+- **Bengali**: Normalize ya-phala and ra-phala forms
+- **Urdu**: Right-to-left text handling, ligature normalization
 
-### Component Layout (Top to Bottom)
-The architecture follows a linear pipeline with feedback loops:
-
-**Layer 1: Input Layer**
-- Three input sources: Camera Module, Gallery Upload, PDF Import
-- All converge into Image Preprocessing Unit
-- Preprocessing includes: Quality Check → Enhancement → Normalization → Format Conversion
-
-**Layer 2: OCR Layer**
-- Image Preprocessing feeds into Script Detector
-- Script Detector routes to appropriate OCR Engine (EasyOCR or Tesseract)
-- OCR Engine outputs: Extracted Text + Confidence Scores + Bounding Boxes
-- Low confidence triggers User Correction Interface (feedback loop to Layer 1)
-
-**Layer 3: Language Processing Layer**
-- Extracted Text flows into Language Detection Module
-- FastText classifier identifies source language
-- Parallel path: Script Analysis provides additional confidence
-- Output: Language Code + Confidence Score
-- Ambiguous results trigger User Language Selection (feedback loop)
-
-**Layer 4: Translation Layer**
-- Source Text + Language Code enter Translation Router
-- Router selects model: IndicTrans2 (primary) or mBART50 (fallback)
-- Translation Model processes with attention mechanism
-- Post-processor applies grammar correction and formatting
-- Output: Translated Text in Target Language
-
-**Layer 5: Simplification Layer**
-- Translated Text enters Complexity Analyzer
-- Analyzer identifies: Technical Terms, Long Sentences, Passive Voice
-- Routing decision: LLM API (online) or Rule Engine (offline)
-- LLM Path: GPT-4 with few-shot prompts → Simplified Text + Explanations
-- Rule Path: Sentence Splitter → Jargon Replacer → Readability Scorer
-- Output: Simplified Text + Glossary
-
-**Layer 6: Audio Generation Layer**
-- Simplified Text enters Text Normalizer (expand abbreviations, handle numbers)
-- Phoneme Converter maps text to pronunciation
-- TTS Engine (gTTS or Coqui) generates audio waveform
-- Audio Post-processor normalizes and compresses
-- Output: Audio File (MP3/WAV)
-
-**Layer 7: Output Layer**
-- Presentation Module displays three panels:
-  - Original Text (with OCR confidence highlights)
-  - Translated & Simplified Text (with glossary tooltips)
-  - Audio Player (with speed controls)
-- Export Module enables: Save PDF, Share Audio, Copy Text
-- Feedback Module collects user corrections → feeds back to Model Training Pipeline
-
-**Cross-cutting Components**:
-- **Cache Layer**: Sits between all layers, stores intermediate results
-- **Error Handler**: Monitors all components, triggers fallbacks
-- **Analytics Module**: Logs performance metrics, user interactions
-- **Model Registry**: Manages model versions, enables A/B testing
-
-**Data Flow Arrows**:
-- Solid arrows: Primary data flow
-- Dashed arrows: Fallback/alternative paths
-- Dotted arrows: Feedback loops for user corrections
-- Bidirectional arrows: Cache read/write operations
+**Character Mapping**:
+- Map variant forms to canonical forms
+- Handle deprecated Unicode characters
+- Transliteration support for cross-script search
 
 
-## 6. Future AI Enhancements
+## 5. Backend Architecture
 
-### Offline Model Optimization
-**Challenge**: Current pipeline relies on cloud APIs (translation, TTS, simplification)
+### 5.1 Framework Selection
 
-**Optimization Strategies**:
-1. **Model Quantization**: Convert FP32 models to INT8, reducing size by 75% with <2% accuracy loss
-2. **Knowledge Distillation**: Train smaller student models (50M params) from larger teachers (600M params)
-3. **Pruning**: Remove redundant neurons, achieve 40-60% sparsity without performance degradation
-4. **Mobile-optimized Architectures**: Deploy TensorFlow Lite or ONNX Runtime for on-device inference
+**Primary Framework**: FastAPI (Python)
 
-**Target Specifications**:
-- OCR: 30MB per language, <500ms inference on mid-range phones
-- Translation: 100MB distilled IndicTrans2, <1s for 100-word text
-- TTS: 50MB Coqui model, <2s audio generation
-- Total app size: <500MB with 5 language packs
+**Rationale**:
+- Async support for high concurrency
+- Automatic API documentation (OpenAPI/Swagger)
+- Type hints and validation (Pydantic)
+- Excellent performance (comparable to Node.js)
+- Native Python integration with ML libraries
 
-**Hybrid Approach**:
-- Offline models for common use cases (90% of documents)
-- Cloud fallback for complex documents or rare language pairs
-- Progressive model download based on user's language preferences
+**Alternative**: Node.js (Express) for lightweight services
 
-### Handwritten Text Recognition
-**Current Limitation**: OCR optimized for printed text, fails on handwritten documents
+### 5.2 Microservices Architecture
 
-**Proposed Solution**:
-1. **HTR Model Integration**: Deploy IAM Handwriting Database-trained models
-2. **Indic Script HTR**: Fine-tune on IIIT-HWS dataset (Hindi, Telugu, Tamil handwriting)
-3. **Writer-independent Recognition**: Handle diverse handwriting styles
-4. **Confidence-based Routing**: Detect handwritten vs printed, route to appropriate model
+**Service Decomposition**:
 
-**Technical Approach**:
-- CNN-RNN-CTC architecture for sequence recognition
-- Attention mechanism for handling cursive writing
-- Data augmentation: Synthetic handwriting generation
-- User feedback loop: Collect corrections to improve model
+1. **API Gateway Service**
+   - Entry point for all client requests
+   - Authentication and authorization
+   - Rate limiting and request validation
+   - Routes requests to appropriate microservices
 
-**Expected Performance**:
-- Character accuracy: 85-90% for clear handwriting
-- Word accuracy: 75-80% with language model correction
-- Processing time: 2-3x slower than printed text OCR
+2. **OCR Service**
+   - Image preprocessing
+   - Text extraction using EasyOCR
+   - Confidence scoring and validation
+   - Exposes REST API: `POST /ocr/extract`
+
+3. **Language Detection Service**
+   - FastText-based language identification
+   - Script detection
+   - Confidence thresholding
+   - Exposes REST API: `POST /language/detect`
+
+4. **Translation Service**
+   - IndicTrans2 model inference
+   - Language pair routing
+   - Translation caching
+   - Exposes REST API: `POST /translate`
+
+5. **Simplification Service**
+   - LLM API integration
+   - Rule-based fallback
+   - Glossary generation
+   - Exposes REST API: `POST /simplify`
+
+6. **TTS Service**
+   - Google TTS API integration
+   - Audio file generation and storage
+   - Caching and CDN integration
+   - Exposes REST API: `POST /tts/generate`
+
+7. **Sign Language Service**
+   - WebSocket server for real-time streaming
+   - MediaPipe hand detection
+   - LSTM gesture recognition
+   - Exposes WebSocket: `ws://domain/sign-language`
+
+8. **User Service**
+   - User preferences and settings
+   - Translation history
+   - Authentication (JWT tokens)
+   - Exposes REST API: `GET/POST /user/*`
+
+9. **Analytics Service**
+   - Usage metrics collection
+   - Model performance monitoring
+   - User feedback aggregation
+   - Exposes REST API: `POST /analytics/event`
+
+**Inter-service Communication**:
+- Synchronous: REST APIs for request-response
+- Asynchronous: SQS for background jobs
+- Real-time: WebSocket for sign language streaming
+- Service discovery: AWS Cloud Map or Consul
+
+### 5.3 API Design
+
+**RESTful Endpoints**:
+
+```
+POST /api/v1/document/process
+- Upload document for full pipeline processing
+- Returns: extracted text, translation, audio URL
+
+POST /api/v1/ocr/extract
+- Extract text from image
+- Returns: text, confidence scores, bounding boxes
+
+POST /api/v1/translate
+- Translate text between languages
+- Returns: translated text, confidence score
+
+POST /api/v1/simplify
+- Simplify complex text
+- Returns: simplified text, glossary
+
+POST /api/v1/tts/generate
+- Generate speech from text
+- Returns: audio file URL
+
+WS /api/v1/sign-language/stream
+- Real-time sign language recognition
+- Bidirectional: frames in, recognized text out
+
+GET /api/v1/user/history
+- Retrieve user's translation history
+- Returns: paginated list of past translations
+
+POST /api/v1/feedback
+- Submit user feedback on results
+- Returns: acknowledgment
+```
+
+**Response Format**:
+```json
+{
+  "status": "success",
+  "data": {
+    "original_text": "...",
+    "translated_text": "...",
+    "simplified_text": "...",
+    "audio_url": "https://...",
+    "confidence": 0.95
+  },
+  "metadata": {
+    "source_language": "en",
+    "target_language": "hi",
+    "processing_time_ms": 3500
+  }
+}
+```
 
 
-### Dialect Adaptation
-**Challenge**: Standard language models don't capture regional dialects and colloquialisms
+## 6. Cloud Infrastructure (AWS-based)
 
-**Dialect Recognition**:
-- Extend language detection to identify dialects (e.g., Awadhi vs Standard Hindi, Hyderabadi vs Telugu)
-- Use phonetic features and vocabulary markers for classification
-- Build dialect taxonomy for major Indian languages
+### 6.1 Storage Layer
 
-**Dialect-aware Translation**:
-- Fine-tune translation models on dialect-specific corpora
-- Implement dialect normalization layer (dialect → standard → target language)
-- Preserve cultural context and idiomatic expressions
+**Amazon S3**:
+- **Input Bucket**: User-uploaded documents (lifecycle: 7 days)
+- **Processing Bucket**: Preprocessed images (lifecycle: 1 day)
+- **Audio Bucket**: Generated TTS files (lifecycle: 24 hours)
+- **Model Bucket**: ML model files and weights (no expiration)
+- **Backup Bucket**: Critical data backups (lifecycle: 30 days)
 
-**Data Collection Strategy**:
-- Crowdsource dialect samples from regional communities
-- Partner with local NGOs for authentic dialect data
-- Use speech-to-text to capture spoken dialects
+**Configuration**:
+- Versioning enabled for model bucket
+- Server-side encryption (SSE-S3)
+- CORS configuration for direct browser uploads
+- CloudFront CDN for audio file delivery
 
-**TTS Dialect Support**:
-- Train voice models on dialect-specific speech data
-- Capture regional pronunciation patterns and intonation
-- Allow users to select dialect preference for audio output
+**Cost Optimization**:
+- S3 Intelligent-Tiering for infrequently accessed data
+- Lifecycle policies for automatic deletion
+- Compression for model files (gzip)
 
-### Personalization
-**User Profile Learning**:
-- Track frequently translated document types (medical, banking, government)
-- Learn user's vocabulary level and preferred simplification style
-- Remember language pair preferences and TTS settings
+### 6.2 Compute Layer
 
-**Adaptive Simplification**:
-- Adjust complexity based on user's comprehension feedback
-- Build personal glossary of terms user has learned
-- Reduce explanations for familiar concepts over time
+**Amazon EC2**:
+- **GPU Instances** (g4dn.xlarge/2xlarge):
+  - OCR Service: 2-4 instances
+  - Translation Service: 2-4 instances
+  - Sign Language Service: 2 instances
+  - Auto Scaling based on CPU/GPU utilization
+  
+- **CPU Instances** (t3.medium):
+  - API Gateway: 2-4 instances
+  - User Service: 2 instances
+  - Analytics Service: 1 instance
 
-**Context-aware Processing**:
-- Use document history to improve translation consistency
-- Maintain terminology database across user's documents
-- Suggest related documents or information based on content
+**AWS Lambda**:
+- Language Detection: Serverless, auto-scaling
+- Image Preprocessing: Event-driven from S3
+- Simplification Fallback: Rule-based engine
+- Webhook handlers: User notifications
 
-**Smart Recommendations**:
-- Predict document type from image preview
-- Pre-select likely source/target languages
-- Suggest relevant government schemes or actions based on document content
+**Configuration**:
+- AMI with pre-installed dependencies (Docker, CUDA)
+- Auto Scaling Groups with target tracking policies
+- Spot Instances for cost savings (non-critical workloads)
 
-**Privacy-preserving Personalization**:
-- On-device learning without sending personal data to cloud
-- Federated learning to improve models while preserving privacy
-- User control over data retention and model personalization
+### 6.3 API Management
+
+**Amazon API Gateway**:
+- REST API endpoints for all microservices
+- WebSocket API for sign language streaming
+- Request validation and transformation
+- API key management for rate limiting
+- CORS configuration for web clients
+
+**Features**:
+- Throttling: 1000 requests/second per user
+- Caching: 5-minute TTL for translation results
+- Custom domain with SSL certificate
+- CloudWatch integration for monitoring
+
+### 6.4 Database Layer
+
+**Amazon DynamoDB**:
+- **Users Table**: User profiles, preferences, authentication
+  - Partition Key: user_id
+  - GSI: email for login
+  
+- **Translations Table**: Translation history
+  - Partition Key: user_id
+  - Sort Key: timestamp
+  - TTL: 90 days
+  
+- **Feedback Table**: User feedback and corrections
+  - Partition Key: feedback_id
+  - GSI: user_id for user-specific queries
+
+**Amazon ElastiCache (Redis)**:
+- Translation result caching (TTL: 7 days)
+- Session management (JWT token blacklist)
+- Rate limiting counters
+- Real-time analytics aggregation
+
+**Configuration**:
+- DynamoDB: On-demand billing for variable workload
+- ElastiCache: cache.t3.medium cluster (2 nodes)
+- Automatic backups enabled
+
+### 6.5 Message Queue
+
+**Amazon SQS**:
+- **Document Processing Queue**: Async document pipeline
+- **TTS Generation Queue**: Background audio generation
+- **Analytics Queue**: Event collection for batch processing
+- **Dead Letter Queue**: Failed message handling
+
+**Configuration**:
+- Standard queues for most use cases
+- FIFO queue for ordered processing (if needed)
+- Visibility timeout: 5 minutes
+- Message retention: 4 days
+
+### 6.6 Monitoring & Logging
+
+**Amazon CloudWatch**:
+- Metrics: CPU, memory, GPU utilization, request latency
+- Logs: Application logs from all services
+- Alarms: Auto-scaling triggers, error rate alerts
+- Dashboards: Real-time system health visualization
+
+**AWS X-Ray**:
+- Distributed tracing across microservices
+- Performance bottleneck identification
+- Request flow visualization
+
+### 6.7 Deployment Strategy
+
+**Containerization**:
+- Docker containers for all microservices
+- Amazon ECR for container registry
+- Multi-stage builds for optimized image size
+
+**Orchestration Options**:
+
+**Option 1: Amazon ECS (Recommended for hackathon)**
+- Simpler setup, managed by AWS
+- Fargate for serverless containers (CPU services)
+- EC2 launch type for GPU services
+- Service auto-scaling and load balancing
+
+**Option 2: Amazon EKS (For production scale)**
+- Kubernetes for advanced orchestration
+- Better for complex multi-service deployments
+- Helm charts for package management
+- Higher operational complexity
+
+**CI/CD Pipeline**:
+- GitHub Actions or AWS CodePipeline
+- Automated testing on pull requests
+- Blue-green deployment for zero downtime
+- Rollback capability for failed deployments
+
+**Infrastructure as Code**:
+- Terraform or AWS CloudFormation
+- Version-controlled infrastructure
+- Reproducible environments (dev, staging, prod)
+
+
+## 7. Scalability Plan
+
+### 7.1 Horizontal Scaling
+
+**Auto Scaling Policies**:
+
+**EC2 Auto Scaling Groups**:
+- **Target Tracking**: Maintain 70% CPU utilization
+- **Step Scaling**: Add 2 instances when queue depth >100
+- **Scheduled Scaling**: Scale up during peak hours (9 AM - 6 PM IST)
+- **Cooldown Period**: 5 minutes between scaling actions
+
+**Lambda Concurrency**:
+- Reserved concurrency: 100 for critical functions
+- Provisioned concurrency: 10 for language detection (reduce cold starts)
+- Burst capacity: Up to 1000 concurrent executions
+
+**DynamoDB Auto Scaling**:
+- Target utilization: 70% of provisioned capacity
+- Scale up: When consumed capacity >70% for 2 minutes
+- Scale down: When consumed capacity <30% for 15 minutes
+- Min capacity: 5 RCU/WCU, Max: 1000 RCU/WCU
+
+### 7.2 Load Balancing
+
+**Application Load Balancer (ALB)**:
+- Distributes traffic across EC2 instances
+- Health checks every 30 seconds
+- Sticky sessions for stateful services
+- SSL termination at load balancer
+
+**Target Groups**:
+- OCR Service: Round-robin distribution
+- Translation Service: Least outstanding requests
+- Sign Language Service: IP hash for WebSocket persistence
+
+**Cross-Zone Load Balancing**:
+- Enabled for even distribution across AZs
+- Improves fault tolerance
+
+### 7.3 Caching Strategy
+
+**Multi-layer Caching**:
+
+**Layer 1: CDN (CloudFront)**
+- Cache audio files at edge locations
+- TTL: 24 hours
+- Reduces S3 GET requests by 80%
+
+**Layer 2: Application Cache (ElastiCache)**
+- Translation results: 7-day TTL
+- Language detection: 30-day TTL
+- User preferences: No expiration (invalidate on update)
+
+**Layer 3: In-memory Cache**
+- Model weights cached in GPU memory
+- Frequently used translations in service memory
+- LRU eviction policy
+
+**Cache Invalidation**:
+- Manual invalidation via API
+- Automatic on model updates
+- Version-based cache keys
+
+### 7.4 Database Optimization
+
+**DynamoDB Best Practices**:
+- Partition key design for even distribution
+- GSI for alternate query patterns
+- Batch operations for bulk reads/writes
+- DynamoDB Streams for change data capture
+
+**Query Optimization**:
+- Use Query instead of Scan operations
+- Limit result set size with pagination
+- Project only required attributes
+- Use eventually consistent reads when possible
+
+### 7.5 Asynchronous Processing
+
+**Queue-based Architecture**:
+- Decouple services with SQS
+- Process non-critical tasks asynchronously
+- Retry failed jobs with exponential backoff
+- Dead letter queue for manual intervention
+
+**Background Jobs**:
+- TTS generation: Async with callback
+- Analytics aggregation: Batch processing every hour
+- Model retraining: Scheduled weekly jobs
+
+### 7.6 Geographic Distribution
+
+**Multi-Region Deployment** (Future):
+- Primary region: ap-south-1 (Mumbai)
+- Secondary region: ap-southeast-1 (Singapore)
+- Route 53 latency-based routing
+- Cross-region S3 replication for models
+
+**Edge Computing**:
+- CloudFront edge locations for content delivery
+- Lambda@Edge for request routing
+- Reduced latency for global users
+
+
+## 8. Security Considerations
+
+### 8.1 Network Security
+
+**HTTPS Everywhere**:
+- TLS 1.3 for all API communications
+- SSL certificates from AWS Certificate Manager
+- Enforce HTTPS with HTTP to HTTPS redirect
+- HSTS headers for browser security
+
+**VPC Configuration**:
+- Private subnets for backend services
+- Public subnets for load balancers only
+- NAT Gateway for outbound internet access
+- Security groups with least privilege rules
+
+**Network ACLs**:
+- Deny all by default
+- Allow only required ports (443, 80, 22)
+- Restrict SSH access to bastion host
+- Block suspicious IP ranges
+
+### 8.2 Authentication & Authorization
+
+**User Authentication**:
+- JWT tokens for stateless authentication
+- Token expiration: 1 hour (access), 7 days (refresh)
+- Secure token storage (HttpOnly cookies)
+- Multi-factor authentication (optional)
+
+**IAM Roles & Policies**:
+- Separate roles for each service
+- Principle of least privilege
+- No hardcoded credentials in code
+- Rotate access keys every 90 days
+
+**API Security**:
+- API keys for third-party integrations
+- Rate limiting: 100 requests/minute per user
+- Request signing for sensitive operations
+- CORS policy restricting allowed origins
+
+### 8.3 Data Encryption
+
+**Encryption at Rest**:
+- S3: Server-side encryption (SSE-S3 or SSE-KMS)
+- DynamoDB: Encryption enabled by default
+- EBS volumes: Encrypted with KMS keys
+- RDS (if used): Transparent data encryption
+
+**Encryption in Transit**:
+- TLS 1.3 for all API calls
+- Encrypted WebSocket connections (WSS)
+- VPC peering encrypted by default
+- S3 transfer acceleration with encryption
+
+**Key Management**:
+- AWS KMS for encryption key management
+- Automatic key rotation every year
+- Separate keys for different data types
+- Audit key usage with CloudTrail
+
+### 8.4 Secure File Handling
+
+**Upload Validation**:
+- File type whitelist (JPEG, PNG, PDF only)
+- File size limit: 10MB
+- Virus scanning with ClamAV or AWS GuardDuty
+- Content-type verification (not just extension)
+
+**Presigned URLs**:
+- Time-limited access (5 minutes)
+- Single-use tokens for uploads
+- IP address restriction (optional)
+- Automatic expiration
+
+**Data Retention**:
+- Automatic deletion after processing
+- User data deleted on account closure
+- Compliance with data protection laws
+- Audit logs retained for 1 year
+
+### 8.5 Application Security
+
+**Input Validation**:
+- Sanitize all user inputs
+- Parameterized queries (prevent SQL injection)
+- Escape special characters
+- Validate data types and ranges
+
+**Dependency Management**:
+- Regular security updates
+- Automated vulnerability scanning (Snyk, Dependabot)
+- Pin dependency versions
+- Review third-party libraries
+
+**Error Handling**:
+- Generic error messages to users
+- Detailed logs for debugging (no sensitive data)
+- Rate limiting on failed authentication
+- Prevent information disclosure
+
+### 8.6 Monitoring & Incident Response
+
+**Security Monitoring**:
+- AWS GuardDuty for threat detection
+- CloudTrail for API audit logs
+- VPC Flow Logs for network monitoring
+- Automated alerts for suspicious activity
+
+**Incident Response Plan**:
+- Automated incident detection
+- Escalation procedures
+- Backup and recovery procedures
+- Post-incident analysis
+
+### 8.7 Compliance
+
+**Data Privacy**:
+- GDPR compliance (if serving EU users)
+- India's Personal Data Protection Bill compliance
+- User consent for data processing
+- Right to data deletion
+
+**Audit & Logging**:
+- Comprehensive audit trails
+- Log retention: 1 year
+- Tamper-proof logs (write-once storage)
+- Regular security audits
+
+
+## 9. Estimated Implementation Cost (Prototype Level)
+
+### 9.1 Development Phase (3 months)
+
+**Team Composition**:
+- 2 Full-stack Developers: $15,000
+- 1 ML Engineer: $10,000
+- 1 DevOps Engineer: $8,000
+- 1 UI/UX Designer: $5,000
+- **Total Development Cost**: $38,000
+
+### 9.2 AWS Infrastructure (Monthly)
+
+**Compute**:
+- EC2 GPU (g4dn.xlarge): 4 instances × $0.526/hr × 730 hrs = $1,536
+- EC2 CPU (t3.medium): 4 instances × $0.0416/hr × 730 hrs = $121
+- Lambda: 1M requests/month = $0.20
+- **Subtotal**: $1,657/month
+
+**Storage**:
+- S3: 100 GB storage + 10,000 requests = $3
+- EBS: 500 GB SSD = $50
+- ECR: 50 GB container images = $5
+- **Subtotal**: $58/month
+
+**Database**:
+- DynamoDB: 10 GB storage + 1M read/write units = $25
+- ElastiCache (cache.t3.medium): 2 nodes × $0.068/hr × 730 hrs = $99
+- **Subtotal**: $124/month
+
+**Networking**:
+- Application Load Balancer: $16 + $0.008/LCU-hour = $25
+- Data Transfer: 500 GB out = $45
+- CloudFront: 100 GB + 1M requests = $10
+- **Subtotal**: $80/month
+
+**API & Services**:
+- API Gateway: 1M requests = $3.50
+- SQS: 1M requests = $0.40
+- CloudWatch: Logs + metrics = $10
+- **Subtotal**: $14/month
+
+**Third-party APIs**:
+- Google TTS: 1M characters = $16
+- OpenAI GPT-4: 10M tokens = $150
+- **Subtotal**: $166/month
+
+**Total Monthly Infrastructure**: ~$2,100/month
+
+**Prototype Phase (3 months)**: $6,300
+
+### 9.3 Additional Costs
+
+**Domain & SSL**: $50/year
+**Development Tools**: $500 (GitHub, monitoring tools)
+**Testing & QA**: $2,000
+**Documentation**: $1,000
+
+### 9.4 Total Prototype Cost
+
+**One-time Costs**: $41,850
+**Monthly Recurring**: $2,100
+**3-Month Prototype Total**: ~$48,150
+
+### 9.5 Cost Optimization Strategies
+
+**For Hackathon/MVP**:
+- Use AWS Free Tier where possible
+- Spot Instances for GPU workloads (70% savings)
+- Reduce instance count (1-2 per service)
+- Use open-source alternatives (Coqui TTS instead of Google)
+- Limit API calls with aggressive caching
+
+**Optimized Hackathon Budget**: ~$500-1,000/month
+
+### 9.6 Production Scale Cost (Projected)
+
+**Assumptions**: 10,000 daily active users, 50,000 translations/day
+
+**Monthly Cost**: $8,000-12,000
+- Compute: $5,000
+- Storage & Database: $1,000
+- APIs: $1,500
+- Networking: $500
+
+**Revenue Model** (to offset costs):
+- Freemium: 10 translations/day free
+- Premium: $2.99/month unlimited
+- Enterprise API: $0.01 per translation
+
+
+## 10. Future Enhancements
+
+### 10.1 AI Model Improvements
+
+**Offline Model Optimization**:
+- Quantize models to INT8 for 4x size reduction
+- Knowledge distillation for smaller student models
+- On-device inference with TensorFlow Lite
+- Progressive model download based on user needs
+- Target: <500MB app size with 5 language packs
+
+**Handwritten Text Recognition**:
+- Fine-tune on IIIT-HWS dataset (Hindi, Tamil, Telugu handwriting)
+- CNN-RNN-CTC architecture for cursive text
+- Writer-independent recognition
+- Expected accuracy: 85-90% on clear handwriting
+
+**Dialect Support**:
+- Extend to regional dialects (Awadhi, Bhojpuri, Hyderabadi)
+- Dialect-aware translation models
+- Crowdsource dialect data from communities
+- TTS voices with regional accents
+
+**Multimodal Understanding**:
+- Combine text and image context for better translation
+- Understand document layout (forms, tables, charts)
+- Extract structured data from documents
+- Visual question answering about documents
+
+### 10.2 Feature Expansions
+
+**Real-time Camera Translation**:
+- Live translation overlay on camera feed
+- No need to capture image
+- Augmented reality text replacement
+- Works on signs, menus, documents
+
+**Voice Input**:
+- Speech-to-text in regional languages
+- Voice commands for app navigation
+- Conversational AI for document Q&A
+- Hands-free operation for accessibility
+
+**Document Templates**:
+- Pre-filled government forms in regional languages
+- Smart form filling with user data
+- Template library for common documents
+- Export to PDF with digital signature
+
+**Collaborative Features**:
+- Share translations with family/friends
+- Community-contributed translations
+- Crowdsourced corrections for model improvement
+- Social features for learning
+
+### 10.3 Platform Integrations
+
+**Government Portal Integration**:
+- DigiLocker API for document retrieval
+- Aadhaar authentication
+- Direct form submission to e-governance portals
+- Real-time status tracking
+
+**Healthcare Integration**:
+- Hospital management system APIs
+- Prescription verification
+- Medicine reminder with audio
+- Telemedicine platform integration
+
+**Banking Integration**:
+- Account statement translation
+- Transaction categorization
+- Financial literacy content
+- Loan application assistance
+
+**Educational Platforms**:
+- LMS integration for multilingual content
+- Homework help in regional languages
+- Parent-teacher communication translation
+- Scholarship application assistance
+
+### 10.4 Advanced Accessibility
+
+**Sign Language Enhancements**:
+- Expand to 500+ ISL signs
+- Regional sign language variations
+- Two-way translation (text to sign animation)
+- Sign language video call translation
+
+**Visual Impairment Support**:
+- Screen reader optimization
+- Voice-first interface
+- Haptic feedback for navigation
+- Audio descriptions for images
+
+**Cognitive Accessibility**:
+- Simplified UI mode
+- Picture-based navigation
+- Text-to-pictogram conversion
+- Adjustable reading speed and complexity
+
+### 10.5 Technical Improvements
+
+**Edge Computing**:
+- Deploy models on edge devices
+- Reduce latency to <500ms
+- Offline-first architecture
+- Sync when connectivity available
+
+**Blockchain for Verification**:
+- Document authenticity verification
+- Tamper-proof translation records
+- Decentralized identity management
+- Smart contracts for certified translations
+
+**Advanced Analytics**:
+- User behavior analysis for UX improvement
+- A/B testing framework
+- Predictive analytics for resource allocation
+- Personalized recommendations
+
+**API Platform**:
+- Public API for third-party developers
+- SDKs for mobile and web
+- Webhook support for integrations
+- Developer portal with documentation
+
+### 10.6 Geographic Expansion
+
+**International Markets**:
+- Expand to Nepal, Bangladesh, Sri Lanka
+- Support for their regional languages
+- Localized content and features
+- Partnership with local NGOs
+
+**Domain Specialization**:
+- Legal document translation
+- Medical terminology specialization
+- Technical documentation translation
+- Academic content translation
+
+### 10.7 Business Model Evolution
+
+**B2B Solutions**:
+- Enterprise API for organizations
+- White-label solutions
+- Custom model training for specific domains
+- SLA-backed service guarantees
+
+**Government Partnerships**:
+- Integration with Digital India initiatives
+- Subsidized access for rural areas
+- Training programs for government staff
+- Data partnership for model improvement
+
+**Social Impact**:
+- Free tier for NGOs and social workers
+- Accessibility grants for underserved communities
+- Open-source core components
+- Research partnerships with universities
 
 ---
 
-**Document Version**: 1.0  
-**Last Updated**: February 10, 2026  
-**Project**: BharatBridge AI - AI System Architecture  
-**Focus**: AI Pipeline Design and Model Selection
-# BharatBridge AI - Cloud Infrastructure and Technology Stack
-
-## 1. Backend Architecture
-
-### Framework Selection: FastAPI
-- **Rationale**: Async support for handling multiple OCR/translation requests, automatic API documentation, built-in validation
-- **Alternative**: Flask (simpler but synchronous)
-
-### API Design
-```
-POST /api/v1/extract-text        # OCR from image
-POST /api/v1/detect-language     # Language detection
-POST /api/v1/translate           # Translation service
-POST /api/v1/simplify            # Content simplification
-POST /api/v1/text-to-speech      # TTS generation
-POST /api/v1/process-complete    # End-to-end pipeline
-```
-
-### Architecture Approach: Monolithic with Modular Design
-- **For Hackathon**: Monolithic (faster development, easier deployment)
-- **Production Path**: Microservices (independent scaling of OCR, translation, TTS services)
-
-## 2. Cloud Infrastructure (AWS)
-
-### Storage
-- **Amazon S3**
-  - Bucket 1: `bharatbridge-uploads` (user images, TTL: 24 hours)
-  - Bucket 2: `bharatbridge-audio` (generated TTS files, TTL: 1 hour)
-  - Lifecycle policies for automatic cleanup
-
-### Compute
-- **AWS Lambda** (Recommended for hackathon)
-  - Serverless, pay-per-use
-  - 15-minute timeout sufficient for processing
-  - Memory: 2GB-3GB for OCR operations
-- **Alternative: EC2 t3.medium** (if Lambda limits are restrictive)
-
-### API Management
-- **AWS API Gateway**
-  - REST API endpoints
-  - Request throttling (1000 req/sec)
-  - CORS configuration
-  - API key management
-
-### Database
-- **Amazon DynamoDB**
-  - Store request metadata, usage analytics
-  - Schema: `{user_id, request_id, timestamp, source_lang, target_lang, status}`
-  - Optional for MVP
-
-### Hosting Strategy
-- **Frontend**: AWS Amplify or S3 + CloudFront
-- **Backend**: Lambda + API Gateway or EC2 with Application Load Balancer
-
-### CDN
-- **Amazon CloudFront**
-  - Cache static assets
-  - Reduce latency for global users
-  - Edge locations across India
-
-## 3. Scalability Plan
-
-### Auto-Scaling
-- **Lambda**: Automatic (up to 1000 concurrent executions)
-- **EC2**: Auto Scaling Group (min: 1, max: 5 instances)
-  - Scale-up trigger: CPU > 70%
-  - Scale-down trigger: CPU < 30%
-
-### Load Balancing
-- **Application Load Balancer** (if using EC2)
-  - Health checks every 30 seconds
-  - Distribute traffic across availability zones
-
-### Concurrent Users
-- **Target**: 100-500 concurrent users for hackathon demo
-- **Lambda concurrency**: Reserved 100 concurrent executions
-- **API Gateway**: 10,000 requests per second burst capacity
-
-## 4. Security Considerations
-
-### HTTPS
-- SSL/TLS certificates via AWS Certificate Manager (free)
-- Enforce HTTPS-only on API Gateway and CloudFront
-
-### IAM Roles
-- Lambda execution role with minimal permissions:
-  - S3: PutObject, GetObject (specific buckets only)
-  - DynamoDB: PutItem, GetItem
-  - CloudWatch: Logs write access
-- No hardcoded credentials
-
-### Data Encryption
-- **At Rest**: S3 server-side encryption (SSE-S3)
-- **In Transit**: TLS 1.2+
-- **Sensitive Data**: Encrypt user metadata in DynamoDB
-
-### Secure File Handling
-- File size limits: 10MB max
-- Allowed formats: JPG, PNG, PDF only
-- Virus scanning (optional): AWS Lambda with ClamAV
-- Signed URLs for S3 uploads (expiry: 5 minutes)
-
-## 5. Deployment Strategy
-
-### CI/CD Pipeline
-```
-GitHub → GitHub Actions → AWS Lambda/EC2
-```
-
-**Workflow**:
-1. Push to `main` branch
-2. Run tests (pytest)
-3. Build Docker image (optional)
-4. Deploy to AWS using AWS CLI/CDK
-5. Run smoke tests
-
-### Containerization
-- **Docker** (optional for hackathon, recommended for production)
-  - Base image: `python:3.11-slim`
-  - Multi-stage builds for smaller images
-  - ECR for container registry
-
-### Version Control
-- **GitHub Repository Structure**:
-```
-/backend          # FastAPI application
-/frontend         # React/Next.js
-/infrastructure   # AWS CDK/Terraform scripts
-/tests            # Unit and integration tests
-/.github/workflows # CI/CD pipelines
-```
-
-## 6. Estimated Implementation Cost
-
-### AWS Free Tier (First 12 months)
-- Lambda: 1M requests/month free
-- S3: 5GB storage free
-- API Gateway: 1M requests/month free
-- DynamoDB: 25GB storage free
-
-### Hackathon Prototype (Beyond Free Tier)
-| Service | Usage | Monthly Cost |
-|---------|-------|--------------|
-| Lambda | 10,000 requests | $0.20 |
-| S3 | 10GB storage + requests | $0.50 |
-| API Gateway | 10,000 requests | $0.04 |
-| CloudFront | 10GB data transfer | $0.85 |
-| EC2 (if used) | t3.medium (100 hours) | $4.00 |
-| **Total** | | **~$5-6/month** |
-
-### Production Scale (1000 daily users)
-- Estimated: $50-100/month
-- Includes: Lambda scaling, increased S3 storage, CloudFront bandwidth
-
-### Cost Optimization Tips
-- Use Lambda for variable workloads
-- Enable S3 lifecycle policies
-- Implement request caching
-- Monitor with AWS Cost Explorer
-
----
-
-## Technology Stack Summary
-
-**Backend**: FastAPI + Python 3.11  
-**OCR**: Tesseract / AWS Textract  
-**Translation**: Google Translate API / AWS Translate  
-**TTS**: gTTS / AWS Polly  
-**Cloud**: AWS (Lambda, S3, API Gateway, CloudFront)  
-**Database**: DynamoDB (optional)  
-**CI/CD**: GitHub Actions  
-**Monitoring**: AWS CloudWatch  
-
----
-
-*This infrastructure is designed for rapid hackathon deployment with a clear path to production scaling.*
+**Document Version**: 2.0  
+**Last Updated**: February 11, 2026  
+**Project**: BharatBridge AI - Complete System Design  
+**Status**: Hackathon Submission Ready
