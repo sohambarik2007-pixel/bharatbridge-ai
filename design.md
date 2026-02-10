@@ -225,7 +225,7 @@ Output format: Simplified text + Glossary of technical terms
 **Model**: Google Cloud Text-to-Speech (Neural2 voices)
 
 **Supported Languages**:
-- Hindi, Bengali, Tamil, Telugu, Kannada, Malayalam
+- Hindi, Odia,Bengali, Tamil, Telugu, Kannada, Malayalam
 - Gujarati, Marathi, Punjabi
 - English (Indian accent)
 
@@ -1158,4 +1158,5 @@ POST /api/v1/feedback
 **Last Updated**: February 11, 2026  
 **Project**: BharatBridge AI - Complete System Design  
 **Status**: Hackathon Submission Ready
+
 
