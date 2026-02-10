@@ -24,7 +24,7 @@ BharatBridge AI is a multimodal AI-powered accessibility platform that bridges I
 
 **Step 1: Input Acquisition**
 - User captures document via mobile camera or uploads from gallery
-- Frontend validates file format (JPEG, PNG, PDF) and size (<10MB)
+- Frontend validates file format (JPEG, PNG, PDF) and size (<100MB)
 - Image uploaded to S3 bucket with pre-signed URL for security
 - Request queued in SQS for asynchronous processing
 
@@ -1158,3 +1158,4 @@ POST /api/v1/feedback
 **Last Updated**: February 11, 2026  
 **Project**: BharatBridge AI - Complete System Design  
 **Status**: Hackathon Submission Ready
+
