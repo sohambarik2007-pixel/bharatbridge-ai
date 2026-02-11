@@ -1,1162 +1,1409 @@
-# BharatBridge AI - Complete System Design Document
+# Bridging the Indian Sign Language (ISL) Communication Gap in Indian Campuses
+## System Design Document
 
 ## 1. System Overview
 
-BharatBridge AI is a multimodal AI-powered accessibility platform that bridges India's digital divide through intelligent document processing and sign language recognition. The platform combines computer vision, natural language processing, and speech synthesis to make information accessible across linguistic and physical barriers.
+### The Communication Gap Problem
 
-**Core Capabilities**:
-- Extract text from images using OCR with support for 15+ Indian scripts
-- Automatically detect source language from extracted text
-- Translate content into Indian regional languages with context preservation
-- Simplify complex bureaucratic and technical language
-- Generate natural-sounding speech in regional languages
-- Recognize Indian Sign Language (ISL) gestures in real-time via camera
+Indian educational campuses face a significant accessibility challenge: deaf and hard-of-hearing students struggle to participate in real-time classroom discussions, group projects, and casual conversations with hearing peers and faculty. While sign language interpreters exist, they are:
 
-**Architecture Philosophy**:
-- Microservices-based for independent scaling and deployment
-- Cloud-native design leveraging AWS managed services
-- Modular AI pipeline allowing component-level optimization
-- API-first approach enabling multi-platform integration
+- Expensive and not available for every class
+- Limited in number, creating scheduling conflicts
+- Not available for informal student inter3actions
+- Unable to scale across multiple simultaneous sessions
+
+This creates an isolation barrier that affects academic performance, social integration, and overall campus experience for deaf/hard-of-hearing students.
+
+### Solution Vision
+
+An AI-powered real-time communication assistant that enables bidirectional communication between deaf/hard-of-hearing students and the hearing campus community. The system acts as a digital interpreter, providing:
+
+**For Deaf/Hard-of-Hearing Students**:
+- Sign language recognition converting ISL gestures to text/speech
+- Real-time display of spoken conversations as text
+- Ability to respond using sign language
+
+**For Hearing Faculty/Students**:
+- Speech-to-text conversion of their spoken words
+- Text-to-speech output of sign language responses
+- No need to learn sign language for basic communication
+
+**Key Design Principles**:
+- Real-time processing with <2 second latency
+- Accessible on common devices (laptops, tablets, phones)
+- Works in typical classroom environments
+- Privacy-focused with no permanent video storage
+- Scalable to multiple concurrent sessions
+
 
 ## 2. End-to-End Workflow
 
-### 2.1 Document/Text Processing Pipeline
+### 2.1 Sign-to-Text-to-Speech Pipeline
 
-**Step 1: Input Acquisition**
-- User captures document via mobile camera or uploads from gallery
-- Frontend validates file format (JPEG, PNG, PDF) and size (<100MB)
-- Image uploaded to S3 bucket with pre-signed URL for security
-- Request queued in SQS for asynchronous processing
+**Use Case**: Deaf student communicates with hearing teacher/peers
 
-**Step 2: Image Preprocessing**
-- Lambda function triggered by S3 event
-- Image enhancement: contrast adjustment, noise reduction, deskewing
-- Quality assessment: calculate sharpness score, reject if below threshold
-- Preprocessed image stored in S3 processing bucket
-
-**Step 3: OCR Extraction**
-- OCR microservice (EasyOCR) processes image
-- Script detection identifies Indic script type
-- Text extraction with confidence scores per word
-- Output: JSON with extracted text, bounding boxes, confidence metrics
-
-
-**Step 4: Language Detection**
-- FastText model identifies source language
-- Confidence threshold check (>0.85 for auto-proceed)
-- Low confidence triggers user confirmation via WebSocket
-- Language code stored in DynamoDB for user preferences
-
-**Step 5: Translation**
-- Translation microservice receives text + language pair
-- IndicTrans2 model performs neural translation
-- Post-processing: grammar correction, punctuation normalization
-- Translated text cached in ElastiCache for repeated requests
-
-**Step 6: Text Simplification**
-- Complexity analyzer identifies technical terms and long sentences
-- LLM API (GPT-4) simplifies content with domain-specific prompts
-- Fallback to rule-based engine if API unavailable
-- Glossary generated for technical terms
-
-**Step 7: Text-to-Speech**
-- TTS microservice receives simplified text
-- Google TTS API generates audio in target language
-- Audio file stored in S3 with 24-hour expiration
-- Presigned URL returned to client for streaming
-
-**Step 8: Response Delivery**
-- API Gateway returns JSON response with:
-  - Original text, translated text, simplified text
-  - Audio file URL
-  - Confidence scores and metadata
-- Frontend displays results with interactive UI
-- User feedback collected for model improvement
-
-### 2.2 Sign Language Processing Pipeline
-
-**Step 1: Video Stream Capture**
-- Mobile/web camera captures video at 30 FPS
-- Frontend performs frame sampling (10 FPS for processing)
+**Step 1: Video Capture**
+- Student's device camera captures sign language gestures
+- Frontend samples frames at 10 FPS (reduced from 30 FPS for bandwidth)
 - Frames sent to backend via WebSocket connection
-- Real-time bidirectional communication for low latency
+- Real-time streaming with minimal buffering
 
-**Step 2: Hand Detection & Tracking**
+**Step 2: Hand Detection**
 - MediaPipe Hands model detects hand landmarks (21 keypoints per hand)
-- Bounding box extraction and normalization
-- Hand orientation and position tracking across frames
-- Filter out non-gesture frames (confidence < 0.7)
+- Processes both hands simultaneously for two-handed signs
+- Filters out low-confidence frames (threshold: 0.7)
+- Normalizes coordinates relative to frame center
 
-**Step 3: Gesture Sequence Processing**
-- Sliding window approach (30 frames = 3 seconds)
-- Extract spatial features: hand shape, finger positions, palm orientation
-- Extract temporal features: movement trajectory, velocity, acceleration
-- Feature vector normalized and fed to gesture classifier
+**Step 3: Gesture Recognition**
+- Sliding window collects 30 frames (3 seconds of gesture)
+- LSTM model processes temporal sequence
+- Outputs recognized ISL sign with confidence score
+- Handles continuous signing with overlapping windows
 
-**Step 4: ISL Recognition**
-- LSTM-based sequence model classifies gesture
-- Support for 100+ common ISL signs (expandable)
-- Confidence scoring for each prediction
-- Context-aware disambiguation for similar gestures
-
-**Step 5: Text Generation**
-- Recognized signs converted to text
-- Grammar correction applied (ISL has different syntax than written language)
+**Step 4: Text Formation**
+- Recognized signs converted to English/Hindi text
+- Basic grammar correction applied
 - Sentence formation from sign sequence
-- Output displayed in real-time on screen
+- Text displayed on screen in real-time
 
-**Step 6: Optional Translation**
-- Recognized text can be translated to other Indian languages
-- Follows same translation pipeline as document processing
-- TTS can be applied for audio output
-- Complete accessibility loop: Sign → Text → Speech
+**Step 5: Speech Synthesis (Optional)**
+- Text-to-speech converts text to audio
+- Plays through speaker for hearing participants
+- Adjustable voice speed and volume
+- Can be muted for text-only mode
+
+**Latency Target**: <2 seconds from gesture completion to text display
+
+### 2.2 Speech-to-Text Pipeline
+
+**Use Case**: Hearing teacher/peer communicates with deaf student
+
+**Step 1: Audio Capture**
+- Microphone captures spoken audio
+- Frontend performs noise cancellation
+- Audio chunks sent to backend (1-second intervals)
+- Continuous streaming for real-time transcription
+
+**Step 2: Speech Recognition**
+- Whisper model or Google STT processes audio
+- Supports English and Hindi (primary campus languages)
+- Handles Indian accents and classroom acoustics
+- Outputs transcribed text with timestamps
+
+**Step 3: Text Display**
+- Transcribed text displayed on deaf student's screen
+- Large, readable font with high contrast
+- Auto-scrolling with conversation history
+- Speaker identification (if multiple speakers)
+
+**Step 4: Optional Translation**
+- Basic translation to regional languages if needed
+- Primarily for non-English speaking faculty
+- Uses simple translation API (Google Translate)
+- Not the primary focus for MVP
+
+**Latency Target**: <1 second from speech to text display
+
+### 2.3 Text-Based Communication Flow
+
+**Use Case**: Asynchronous or supplementary text communication
+
+**Deaf Student Input**:
+- Can type text directly if preferred
+- Useful for complex concepts or names
+- Faster than signing for some contexts
+- Text can be converted to speech for hearing participants
+
+**Hearing Participant Input**:
+- Can type instead of speaking in quiet environments
+- Useful for sharing links, references, or complex terms
+- Text displayed directly to deaf student
+- No processing latency
+
+**Shared Features**:
+- Conversation history saved for session duration
+- Copy/paste functionality
+- Screenshot capability for notes
+- Session export as text file
 
 
 ## 3. AI Module Architecture
 
-### 3.1 OCR Module
+### 3.1 Sign Language Recognition Module
 
-**Model**: EasyOCR (Primary) + Tesseract 5.0 (Fallback)
+**Model Architecture**: CNN-LSTM Hybrid
 
-**Architecture**:
-- Feature Extractor: ResNet-based CNN for image encoding
-- Sequence Modeling: Bidirectional LSTM for character sequence
-- Decoder: CTC (Connectionist Temporal Classification) for text output
+**Components**:
 
-**Supported Scripts**:
-- Devanagari (Hindi, Marathi, Sanskrit)
-- Bengali, Tamil, Telugu, Kannada, Malayalam
-- Gujarati, Punjabi (Gurmukhi), Odia
-- English (Latin script)
+1. **Hand Detection**: MediaPipe Hands
+   - Pre-trained Google model for hand landmark detection
+   - Detects 21 3D landmarks per hand
+   - Runs on-device or server-side depending on deployment
+   - Lightweight and fast (30+ FPS capable)
 
-**Deployment**:
-- Containerized using Docker
-- Deployed on EC2 GPU instances (g4dn.xlarge for cost-efficiency)
-- Model files stored in S3, loaded at container startup
-- Horizontal scaling based on queue depth
+2. **Feature Extraction**: Convolutional Neural Network
+   - Input: Hand landmark coordinates (21 × 3 × 2 hands = 126 features)
+   - 3 convolutional layers with batch normalization
+   - Extracts spatial features (hand shape, finger positions)
+   - Output: 256-dimensional feature vector per frame
 
-**Performance Metrics**:
-- Accuracy: 92-95% on printed text
-- Latency: 2-4 seconds per document page
-- Throughput: 15-20 pages per minute per instance
+3. **Sequence Modeling**: Bidirectional LSTM
+   - Input: Sequence of 30 feature vectors (3 seconds)
+   - 2 LSTM layers with 128 hidden units each
+   - Captures temporal dynamics (movement patterns)
+   - Dropout (0.3) for regularization
 
-### 3.2 Language Detection Module
+4. **Classification**: Fully Connected Layers
+   - 2 dense layers (256 → 128 → num_classes)
+   - Softmax activation for probability distribution
+   - Output: Predicted ISL sign + confidence score
 
-**Model**: FastText Language Identification (176 languages)
-
-**Architecture**:
-- Character n-gram features (2-5 grams)
-- Shallow neural network classifier
-- Softmax output for probability distribution
-
-**Preprocessing**:
-- Unicode normalization (NFKC)
-- Script-based pre-filtering to narrow candidates
-- Minimum text length: 10 characters for reliable detection
-
-**Deployment**:
-- Lightweight model (126MB) deployed on Lambda
-- Cold start optimized with provisioned concurrency
-- Response time: <100ms
-
-**Accuracy**: 99.1% on text >50 characters, 95% on short text
-
-### 3.3 Translation Engine
-
-**Model**: IndicTrans2 (AI4Bharat) - 600M parameter transformer
-
-**Architecture**:
-- Encoder: 12-layer transformer with multi-head attention
-- Decoder: 12-layer auto-regressive transformer
-- Vocabulary: 64K subword tokens (SentencePiece)
-- Training: 230M parallel sentences across 22 Indian languages
-
-**Language Pairs Supported**:
-- All 22 scheduled Indian languages ↔ English
-- Direct translation between major Indian languages
-- Pivot through English for unsupported pairs
-
-**Deployment**:
-- Model quantized to INT8 for faster inference
-- Deployed on EC2 GPU instances (g4dn.2xlarge)
-- Batch processing for efficiency (batch size: 8-16)
-- Model served via TorchServe for production reliability
-
-**Performance**:
-- BLEU Score: 30-45 across language pairs
-- Latency: 1-2 seconds for 100-word text
-- Throughput: 50-100 translations per minute per instance
-
-
-### 3.4 Text Simplification Module
-
-**Primary Approach**: LLM API (GPT-4 Turbo)
-
-**Prompt Engineering**:
-```
-System: You are an expert at simplifying complex Indian government and medical documents.
-User: Simplify the following text to 6th-grade reading level while preserving meaning:
-[Document text]
-Output format: Simplified text + Glossary of technical terms
-```
-
-**Few-shot Examples**:
-- Government form simplification
-- Medical prescription explanation
-- Banking document clarification
-
-**Fallback**: Rule-based Engine
-- Sentence splitter: Break sentences >25 words
-- Passive-to-active voice converter
-- Jargon dictionary: 5000+ terms with simple alternatives
-- Readability scorer: Flesch-Kincaid adapted for Indian languages
-
-**Deployment**:
-- API calls to OpenAI with retry logic
-- Fallback engine on Lambda for offline capability
-- Response caching in ElastiCache (TTL: 7 days)
-
-**Performance**:
-- Latency: 2-4 seconds (LLM), <500ms (rule-based)
-- Quality: Human evaluation score 4.2/5
-
-### 3.5 Text-to-Speech Module
-
-**Model**: Google Cloud Text-to-Speech (Neural2 voices)
-
-**Supported Languages**:
-- Hindi, Odia,Bengali, Tamil, Telugu, Kannada, Malayalam
-- Gujarati, Marathi, Punjabi
-- English (Indian accent)
-
-**Features**:
-- Neural voices for natural prosody
-- SSML support for emphasis and pauses
-- Adjustable speech rate (0.5x to 2x)
-- Multiple voice options per language
-
-**Deployment**:
-- API integration with Google Cloud TTS
-- Audio files cached in S3 (24-hour expiration)
-- CDN (CloudFront) for fast audio delivery
-
-**Fallback**: Coqui TTS (Open-source)
-- On-device model for offline capability
-- Model size: 50-100MB per language
-- Deployed on EC2 for cloud fallback
-
-**Performance**:
-- Latency: 1-2 seconds for 100-word text
-- Audio quality: MOS score 4.0/5
-
-### 3.6 Sign Language Recognition Module
-
-**Model**: Custom LSTM-CNN Hybrid
-
-**Architecture**:
-- Hand Detection: MediaPipe Hands (21 landmarks per hand)
-- Spatial Feature Extractor: 3-layer CNN on hand region
-- Temporal Sequence Model: 2-layer Bidirectional LSTM
-- Classifier: Fully connected layers with softmax output
-
-**Dataset**:
+**Training Data**:
 - INCLUDE dataset (Indian Sign Language)
-- Custom collected data: 100 common ISL signs
-- 50 samples per sign, 10 signers for diversity
+- Custom collected data: 150 common campus-related signs
+- Signs include: greetings, questions, academic terms, common phrases
+- 30-50 samples per sign from 8-10 different signers
 - Data augmentation: rotation, scaling, speed variation
 
-**Training**:
-- Loss function: Categorical cross-entropy
-- Optimizer: Adam with learning rate scheduling
-- Regularization: Dropout (0.3), L2 weight decay
-- Training time: 24 hours on V100 GPU
+**Model Size**: ~50MB (deployable on edge devices)
+**Inference Time**: ~100ms per gesture prediction
+**Accuracy Target**: 85%+ on test set
 
-**Deployment**:
-- Real-time inference on EC2 GPU instances
-- WebSocket server for low-latency streaming
-- Frame buffering and sliding window processing
+### 3.2 Speech-to-Text Module
 
-**Performance**:
-- Accuracy: 87% on test set (100 signs)
-- Latency: <200ms per gesture prediction
-- FPS: 10 frames processed per second
-
-
-## 4. Data Processing Strategy
-
-### 4.1 Image Preprocessing
-
-**Quality Assessment**:
-- Calculate Laplacian variance for sharpness (threshold: 100)
-- Check resolution (minimum: 800x600 pixels)
-- Detect excessive blur or motion artifacts
-- Reject and request retake if quality insufficient
-
-**Enhancement Pipeline**:
-1. **Contrast Enhancement**: CLAHE (Clip Limit: 2.0, Grid: 8x8)
-2. **Noise Reduction**: Bilateral filter (d=9, sigmaColor=75, sigmaSpace=75)
-3. **Binarization**: Adaptive Gaussian thresholding (block size: 11, C: 2)
-4. **Deskewing**: Hough line transform to detect rotation, correct up to ±15°
-5. **Border Removal**: Contour detection to crop unnecessary margins
-
-**Normalization**:
-- Resize maintaining aspect ratio (max dimension: 1024px)
-- Convert to grayscale for OCR processing
-- Normalize pixel values to [0, 1] range
-
-**Script-specific Preprocessing**:
-- Tamil: Aggressive binarization due to complex characters
-- Bengali: Preserve horizontal line (matra) integrity
-- Devanagari: Handle conjunct characters carefully
-
-### 4.2 Gesture Frame Processing
-
-**Hand Detection**:
-- MediaPipe Hands model detects 21 3D landmarks per hand
-- Confidence threshold: 0.7 (reject frames below)
-- Track both hands independently for two-handed signs
-- Normalize coordinates relative to wrist position
-
-**Feature Extraction**:
-- **Spatial Features**: 
-  - Finger angles (5 per hand)
-  - Palm orientation (3D rotation)
-  - Hand shape descriptor (21-point vector)
-- **Temporal Features**:
-  - Movement velocity (frame-to-frame displacement)
-  - Acceleration (second derivative)
-  - Trajectory smoothing (Kalman filter)
-
-**Sequence Windowing**:
-- Sliding window: 30 frames (3 seconds at 10 FPS)
-- Overlap: 15 frames (50% overlap for smooth recognition)
-- Padding: Repeat last frame if sequence too short
-- Truncation: Take last 30 frames if sequence too long
-
-**Data Augmentation** (Training only):
-- Random rotation: ±15°
-- Random scaling: 0.9-1.1x
-- Speed variation: 0.8-1.2x
-- Horizontal flip for symmetric signs
-
-### 4.3 Noise Handling
-
-**Image Noise**:
-- Gaussian noise: Bilateral filtering
-- Salt-and-pepper noise: Median filtering
-- JPEG artifacts: Deblocking filter
-- Shadow removal: Illumination normalization
-
-**Video Noise**:
-- Frame dropping: Interpolate missing frames
-- Motion blur: Temporal averaging
-- Background clutter: Hand segmentation with background subtraction
-- Lighting variation: Histogram equalization per frame
-
-**Robustness Strategies**:
-- Ensemble of models trained on different noise levels
-- Confidence-based rejection of noisy inputs
-- User feedback for failed recognitions
-- Continuous model retraining with edge cases
-
-### 4.4 Script Normalization
-
-**Unicode Normalization**:
-- Apply NFKC (Compatibility Decomposition + Canonical Composition)
-- Handle zero-width joiners and non-joiners
-- Normalize Indic numerals to ASCII (optional)
-
-**Script-specific Handling**:
-- **Devanagari**: Normalize conjuncts, handle nukta variations
-- **Tamil**: Normalize vowel markers, handle archaic characters
-- **Bengali**: Normalize ya-phala and ra-phala forms
-- **Urdu**: Right-to-left text handling, ligature normalization
-
-**Character Mapping**:
-- Map variant forms to canonical forms
-- Handle deprecated Unicode characters
-- Transliteration support for cross-script search
-
-
-## 5. Backend Architecture
-
-### 5.1 Framework Selection
-
-**Primary Framework**: FastAPI (Python)
+**Model Choice**: OpenAI Whisper (Small or Base model)
 
 **Rationale**:
-- Async support for high concurrency
-- Automatic API documentation (OpenAPI/Swagger)
-- Type hints and validation (Pydantic)
-- Excellent performance (comparable to Node.js)
-- Native Python integration with ML libraries
+- Excellent performance on Indian accents
+- Supports English and Hindi
+- Open-source and free to use
+- Can run on CPU or GPU
 
-**Alternative**: Node.js (Express) for lightweight services
+**Alternative**: Google Cloud Speech-to-Text
+- Better accuracy but requires API costs
+- Use for production if budget allows
+- Fallback to Whisper for cost-sensitive deployment
 
-### 5.2 Microservices Architecture
+**Configuration**:
+- Model: Whisper-small (244M parameters) or Whisper-base (74M)
+- Language: English (primary), Hindi (secondary)
+- Audio format: 16kHz, mono, 16-bit PCM
+- Chunk size: 1-second audio segments for real-time processing
 
-**Service Decomposition**:
+**Performance**:
+- Word Error Rate (WER): 10-15% on Indian English
+- Latency: 500ms - 1s per audio chunk
+- Handles classroom noise reasonably well
 
-1. **API Gateway Service**
-   - Entry point for all client requests
-   - Authentication and authorization
-   - Rate limiting and request validation
-   - Routes requests to appropriate microservices
+### 3.3 Text-to-Speech Module
 
-2. **OCR Service**
-   - Image preprocessing
-   - Text extraction using EasyOCR
-   - Confidence scoring and validation
-   - Exposes REST API: `POST /ocr/extract`
+**Model Choice**: gTTS (Google Text-to-Speech) or Piper TTS
 
-3. **Language Detection Service**
-   - FastText-based language identification
-   - Script detection
-   - Confidence thresholding
-   - Exposes REST API: `POST /language/detect`
+**Primary Option**: gTTS
+- Free API with reasonable limits
+- Natural-sounding voices
+- Supports English and Hindi
+- Simple integration
 
-4. **Translation Service**
-   - IndicTrans2 model inference
-   - Language pair routing
-   - Translation caching
-   - Exposes REST API: `POST /translate`
+**Offline Alternative**: Piper TTS
+- Open-source, runs locally
+- Smaller model size (~10-20MB per language)
+- Slightly lower quality but acceptable
+- No API costs or internet dependency
 
-5. **Simplification Service**
-   - LLM API integration
-   - Rule-based fallback
-   - Glossary generation
-   - Exposes REST API: `POST /simplify`
+**Configuration**:
+- Voice: Female (default, research shows better clarity)
+- Speed: Adjustable (0.8x - 1.2x)
+- Language: Match input text language
+- Output format: MP3 or WAV
 
-6. **TTS Service**
-   - Google TTS API integration
-   - Audio file generation and storage
-   - Caching and CDN integration
-   - Exposes REST API: `POST /tts/generate`
+**Performance**:
+- Latency: 500ms - 1s for typical sentence
+- Quality: Natural prosody, clear pronunciation
 
-7. **Sign Language Service**
-   - WebSocket server for real-time streaming
-   - MediaPipe hand detection
-   - LSTM gesture recognition
-   - Exposes WebSocket: `ws://domain/sign-language`
+### 3.4 Optional Translation Module
 
-8. **User Service**
-   - User preferences and settings
-   - Translation history
-   - Authentication (JWT tokens)
-   - Exposes REST API: `GET/POST /user/*`
+**Model Choice**: Google Translate API (Basic Tier)
 
-9. **Analytics Service**
-   - Usage metrics collection
-   - Model performance monitoring
-   - User feedback aggregation
-   - Exposes REST API: `POST /analytics/event`
+**Scope** (MVP):
+- English ↔ Hindi translation only
+- Used sparingly to minimize API costs
+- Primarily for faculty who prefer Hindi
+- Not core to the ISL communication flow
 
-**Inter-service Communication**:
-- Synchronous: REST APIs for request-response
-- Asynchronous: SQS for background jobs
-- Real-time: WebSocket for sign language streaming
-- Service discovery: AWS Cloud Map or Consul
+**Future Enhancement**:
+- Add more regional languages (Tamil, Telugu, Bengali)
+- Use open-source models (IndicTrans2) to reduce costs
+- Context-aware translation for academic terms
 
-### 5.3 API Design
+**Performance**:
+- Latency: 200-500ms per translation
+- Accuracy: 80-85% for simple sentences
 
-**RESTful Endpoints**:
 
-```
-POST /api/v1/document/process
-- Upload document for full pipeline processing
-- Returns: extracted text, translation, audio URL
+## 4. Gesture Recognition Technical Details
 
-POST /api/v1/ocr/extract
-- Extract text from image
-- Returns: text, confidence scores, bounding boxes
+### 4.1 Hand Landmark Detection
 
-POST /api/v1/translate
-- Translate text between languages
-- Returns: translated text, confidence score
+**MediaPipe Hands Pipeline**:
 
-POST /api/v1/simplify
-- Simplify complex text
-- Returns: simplified text, glossary
+**Input**: RGB video frame (640×480 or 1280×720)
 
-POST /api/v1/tts/generate
-- Generate speech from text
-- Returns: audio file URL
+**Processing Steps**:
+1. Palm detection: Locates hand regions in frame
+2. Hand landmark model: Predicts 21 3D landmarks
+3. Tracking: Maintains hand identity across frames
 
-WS /api/v1/sign-language/stream
-- Real-time sign language recognition
-- Bidirectional: frames in, recognized text out
+**Landmark Points** (21 per hand):
+- Wrist (1 point)
+- Thumb (4 points: CMC, MCP, IP, TIP)
+- Index finger (4 points: MCP, PIP, DIP, TIP)
+- Middle finger (4 points)
+- Ring finger (4 points)
+- Pinky finger (4 points)
 
-GET /api/v1/user/history
-- Retrieve user's translation history
-- Returns: paginated list of past translations
-
-POST /api/v1/feedback
-- Submit user feedback on results
-- Returns: acknowledgment
-```
-
-**Response Format**:
-```json
+**Output Format**:
+```python
 {
-  "status": "success",
-  "data": {
-    "original_text": "...",
-    "translated_text": "...",
-    "simplified_text": "...",
-    "audio_url": "https://...",
+  "left_hand": {
+    "landmarks": [[x1, y1, z1], [x2, y2, z2], ...],  # 21 points
     "confidence": 0.95
   },
-  "metadata": {
-    "source_language": "en",
-    "target_language": "hi",
-    "processing_time_ms": 3500
+  "right_hand": {
+    "landmarks": [[x1, y1, z1], [x2, y2, z2], ...],
+    "confidence": 0.92
   }
 }
 ```
 
+**Normalization**:
+- Coordinates normalized to [0, 1] range
+- Origin shifted to wrist position
+- Scale normalized by hand size
+- Rotation invariance through alignment
 
-## 6. Cloud Infrastructure (AWS-based)
+### 4.2 Frame Sampling Strategy
 
-### 6.1 Storage Layer
+**Challenge**: Balance between accuracy and latency
 
-**Amazon S3**:
-- **Input Bucket**: User-uploaded documents (lifecycle: 7 days)
-- **Processing Bucket**: Preprocessed images (lifecycle: 1 day)
-- **Audio Bucket**: Generated TTS files (lifecycle: 24 hours)
-- **Model Bucket**: ML model files and weights (no expiration)
-- **Backup Bucket**: Critical data backups (lifecycle: 30 days)
+**Approach**:
+- Camera captures at 30 FPS
+- Sample every 3rd frame → 10 FPS for processing
+- Reduces bandwidth by 67%
+- Still captures smooth gesture motion
+
+**Buffering**:
+- Maintain sliding window of 30 frames (3 seconds)
+- 50% overlap between windows (15 frames)
+- Allows continuous gesture recognition
+- Handles variable-speed signing
+
+**Quality Filtering**:
+- Reject frames with hand confidence <0.7
+- Interpolate missing frames (up to 3 consecutive)
+- Discard sequences with >30% low-quality frames
+- Request user to re-sign if quality insufficient
+
+### 4.3 Feature Engineering
+
+**Spatial Features** (per frame):
+- Finger angles: 5 angles per hand (10 total)
+- Palm orientation: 3D rotation vector
+- Hand shape descriptor: Distance matrix between landmarks
+- Hand position: Relative to frame center
+- Feature vector size: 126 raw + 50 engineered = 176 features
+
+**Temporal Features** (across frames):
+- Movement velocity: Frame-to-frame displacement
+- Acceleration: Second derivative of position
+- Trajectory: Path traced by key landmarks (wrist, fingertips)
+- Movement smoothness: Jerk (third derivative)
+
+**Normalization**:
+- Z-score normalization per feature
+- Removes signer-specific variations (hand size, speed)
+- Improves model generalization
+
+### 4.4 Sequence Modeling with LSTM
+
+**Architecture**:
+```
+Input: (batch_size, 30 frames, 176 features)
+↓
+Bidirectional LSTM Layer 1: 128 units
+↓
+Dropout: 0.3
+↓
+Bidirectional LSTM Layer 2: 128 units
+↓
+Dropout: 0.3
+↓
+Dense Layer: 256 units, ReLU
+↓
+Dense Layer: 128 units, ReLU
+↓
+Output Layer: num_classes, Softmax
+```
+
+**Why LSTM?**:
+- Captures long-term dependencies in gesture sequences
+- Handles variable-length signs naturally
+- Bidirectional processing improves accuracy
+- Proven effective for sign language recognition
+
+**Training Details**:
+- Loss: Categorical cross-entropy
+- Optimizer: Adam (learning rate: 0.001)
+- Batch size: 32
+- Epochs: 50 with early stopping
+- Validation split: 20%
+
+### 4.5 Confidence Scoring
+
+**Prediction Confidence**:
+- Softmax probability of predicted class
+- Threshold: 0.6 for acceptance
+- Below threshold: Display "unclear, please repeat"
+
+**Sequence Quality Score**:
+- Average hand detection confidence across frames
+- Percentage of valid frames in sequence
+- Movement smoothness metric
+- Combined score: weighted average
+
+**User Feedback**:
+- High confidence (>0.8): Green indicator
+- Medium confidence (0.6-0.8): Yellow indicator
+- Low confidence (<0.6): Red indicator, request re-sign
+- Helps users improve signing clarity
+
+### 4.6 Handling Edge Cases
+
+**Partial Occlusion**:
+- MediaPipe handles minor occlusions
+- If one hand occluded, use single-hand signs only
+- Confidence drops trigger quality warning
+
+**Background Clutter**:
+- MediaPipe's palm detection is robust
+- Encourage plain background for best results
+- Lighting: Recommend well-lit environment
+
+**Signer Variation**:
+- Model trained on diverse signers
+- Handles different hand sizes, speeds, styles
+- Continuous learning from user corrections
+
+**Ambiguous Signs**:
+- Some ISL signs are visually similar
+- Use context from previous signs
+- Allow manual correction by user
+- Log ambiguous cases for model improvement
+
+
+## 5. Backend Architecture
+
+### 5.1 Framework: FastAPI
+
+**Why FastAPI?**:
+- Native async support for WebSocket connections
+- Fast performance (comparable to Node.js)
+- Automatic API documentation (Swagger UI)
+- Type hints and validation with Pydantic
+- Easy integration with ML models (Python ecosystem)
+
+**Project Structure**:
+```
+backend/
+├── app/
+│   ├── main.py                 # FastAPI app initialization
+│   ├── config.py               # Configuration settings
+│   ├── models/
+│   │   ├── sign_recognition.py # ISL model wrapper
+│   │   ├── speech_to_text.py   # Whisper model wrapper
+│   │   └── text_to_speech.py   # TTS wrapper
+│   ├── routes/
+│   │   ├── websocket.py        # WebSocket endpoints
+│   │   ├── speech.py           # Speech-to-text API
+│   │   └── tts.py              # Text-to-speech API
+│   ├── services/
+│   │   ├── gesture_processor.py
+│   │   ├── audio_processor.py
+│   │   └── session_manager.py
+│   └── utils/
+│       ├── mediapipe_handler.py
+│       └── preprocessing.py
+├── models/                     # Trained model files
+├── requirements.txt
+└── Dockerfile
+```
+
+### 5.2 WebSocket for Real-time Streaming
+
+**Sign Language Recognition WebSocket**:
+
+**Endpoint**: `ws://domain/ws/sign-language/{session_id}`
+
+**Client → Server** (Video frames):
+```json
+{
+  "type": "frame",
+  "data": "base64_encoded_image",
+  "timestamp": 1234567890,
+  "frame_number": 42
+}
+```
+
+**Server → Client** (Recognition results):
+```json
+{
+  "type": "recognition",
+  "sign": "hello",
+  "text": "Hello",
+  "confidence": 0.92,
+  "timestamp": 1234567890
+}
+```
+
+**Connection Management**:
+- Heartbeat 
+
+**Connection Management**:
+- Heartbeat ping every 30 seconds
+- Auto-reconnect on connection drop
+- Session timeout: 2 hours of inactivity
+- Graceful disconnection handling
+
+**Speech-to-Text WebSocket**:
+
+**Endpoint**: `ws://domain/ws/speech-to-text/{session_id}`
+
+**Client → Server** (Audio chunks):
+```json
+{
+  "type": "audio",
+  "data": "base64_encoded_audio",
+  "format": "wav",
+  "sample_rate": 16000
+}
+```
+
+**Server → Client** (Transcription):
+```json
+{
+  "type": "transcription",
+  "text": "What is the assignment deadline?",
+  "language": "en",
+  "confidence": 0.88
+}
+```
+
+### 5.3 REST APIs
+
+**Text-to-Speech API**:
+```
+POST /api/tts/generate
+Request:
+{
+  "text": "Hello, how are you?",
+  "language": "en",
+  "speed": 1.0
+}
+
+Response:
+{
+  "audio_url": "https://s3.../audio_123.mp3",
+  "duration_seconds": 2.5
+}
+```
+
+**Translation API** (Optional):
+```
+POST /api/translate
+Request:
+{
+  "text": "Hello",
+  "source_lang": "en",
+  "target_lang": "hi"
+}
+
+Response:
+{
+  "translated_text": "नमस्ते",
+  "confidence": 0.95
+}
+```
+
+**Session Management**:
+```
+POST /api/session/create
+Response:
+{
+  "session_id": "abc123",
+  "expires_at": "2026-02-11T18:00:00Z"
+}
+
+GET /api/session/{session_id}/history
+Response:
+{
+  "messages": [
+    {"type": "sign", "text": "Hello", "timestamp": "..."},
+    {"type": "speech", "text": "Hi there", "timestamp": "..."}
+  ]
+}
+```
+
+### 5.4 Service Components
+
+**Gesture Processor Service**:
+- Receives video frames from WebSocket
+- Runs MediaPipe hand detection
+- Buffers frames in sliding window
+- Feeds sequences to LSTM model
+- Returns recognized signs
+
+**Audio Processor Service**:
+- Receives audio chunks from WebSocket
+- Preprocesses audio (noise reduction, normalization)
+- Runs Whisper model for transcription
+- Returns transcribed text
+
+**Session Manager Service**:
+- Creates and manages communication sessions
+- Stores conversation history (in-memory for MVP)
+- Handles user authentication
+- Cleans up expired sessions
+
+**Model Manager**:
+- Loads ML models at startup
+- Manages model versions
+- Handles model inference requests
+- Implements request queuing for GPU
+
+### 5.5 Deployment Configuration
+
+**Docker Container**:
+```dockerfile
+FROM python:3.10-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    libsndfile1 ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app/ /app/
+COPY models/ /models/
+
+# Expose port
+EXPOSE 8000
+
+# Run FastAPI with Uvicorn
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Requirements.txt** (Key dependencies):
+```
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+python-multipart==0.0.6
+mediapipe==0.10.8
+opencv-python==4.8.1
+numpy==1.24.3
+torch==2.1.0
+openai-whisper==20231117
+gTTS==2.4.0
+pydantic==2.5.0
+python-jose[cryptography]==3.3.0
+```
+
+
+## 6. Cloud Infrastructure (AWS-based, Hackathon Realistic)
+
+### 6.1 Compute: Amazon EC2
+
+**Instance Configuration**:
+
+**GPU Instance** (for Sign Language Recognition):
+- Type: g4dn.xlarge (1 NVIDIA T4 GPU, 4 vCPUs, 16 GB RAM)
+- Quantity: 1 instance (can scale to 2-3 for multiple classrooms)
+- Purpose: Run LSTM model inference, MediaPipe processing
+- Cost: ~$0.526/hour = ~$380/month (if running 24/7)
+
+**CPU Instance** (for Speech-to-Text):
+- Type: t3.medium (2 vCPUs, 4 GB RAM)
+- Quantity: 1 instance
+- Purpose: Run Whisper model (small version works on CPU)
+- Cost: ~$0.0416/hour = ~$30/month
+
+**Cost Optimization for Hackathon**:
+- Use Spot Instances (70% discount, risk of interruption acceptable for demo)
+- Run instances only during demo/testing hours
+- Estimated hackathon cost: $50-100 for 1 week of testing
+
+**AMI Setup**:
+- Ubuntu 22.04 LTS
+- Pre-installed: Docker, NVIDIA drivers, CUDA toolkit
+- Custom AMI with models pre-loaded for fast startup
+
+### 6.2 Storage: Amazon S3
+
+**Buckets**:
+
+1. **Model Storage Bucket**:
+   - Stores trained ML models (LSTM, Whisper)
+   - Size: ~500 MB
+   - Access: Private, EC2 instances only
+   - Cost: Negligible (~$0.01/month)
+
+2. **Audio Files Bucket**:
+   - Temporary storage for generated TTS audio
+   - Lifecycle policy: Delete after 1 hour
+   - Size: ~100 MB at any time
+   - Cost: Negligible
+
+3. **Session Data Bucket** (Optional):
+   - Store conversation history for analytics
+   - Encrypted at rest
+   - Cost: ~$0.50/month for 10 GB
+
+**Total S3 Cost**: <$1/month
+
+### 6.3 API Gateway
+
+**Purpose**:
+- Single entry point for all API requests
+- WebSocket API support for real-time communication
+- Request throttling and rate limiting
+- HTTPS termination
 
 **Configuration**:
-- Versioning enabled for model bucket
-- Server-side encryption (SSE-S3)
-- CORS configuration for direct browser uploads
-- CloudFront CDN for audio file delivery
+- REST API for TTS, translation endpoints
+- WebSocket API for sign language and speech-to-text
+- Custom domain: isl-bridge.yourdomain.com
+- Rate limit: 100 requests/minute per user
 
-**Cost Optimization**:
-- S3 Intelligent-Tiering for infrequently accessed data
-- Lifecycle policies for automatic deletion
-- Compression for model files (gzip)
+**Cost**: ~$3.50 for 1M requests (hackathon: <$1)
 
-### 6.2 Compute Layer
+### 6.4 Load Balancing (Optional for MVP)
 
-**Amazon EC2**:
-- **GPU Instances** (g4dn.xlarge/2xlarge):
-  - OCR Service: 2-4 instances
-  - Translation Service: 2-4 instances
-  - Sign Language Service: 2 instances
-  - Auto Scaling based on CPU/GPU utilization
-  
-- **CPU Instances** (t3.medium):
-  - API Gateway: 2-4 instances
-  - User Service: 2 instances
-  - Analytics Service: 1 instance
+**Application Load Balancer**:
+- Distributes traffic across EC2 instances
+- Health checks every 30 seconds
+- Sticky sessions for WebSocket connections
+- Only needed if scaling beyond 1 instance
 
-**AWS Lambda**:
-- Language Detection: Serverless, auto-scaling
-- Image Preprocessing: Event-driven from S3
-- Simplification Fallback: Rule-based engine
-- Webhook handlers: User notifications
+**Cost**: ~$16/month + $0.008/LCU-hour
+**Hackathon Decision**: Skip for MVP, add if scaling needed
 
-**Configuration**:
-- AMI with pre-installed dependencies (Docker, CUDA)
-- Auto Scaling Groups with target tracking policies
-- Spot Instances for cost savings (non-critical workloads)
+### 6.5 Database (Minimal for MVP)
 
-### 6.3 API Management
+**Option 1: In-Memory (Redis on EC2)**:
+- Store active sessions and conversation history
+- Fast access, no persistence needed
+- Run on same EC2 instance as backend
+- Cost: $0 (included in EC2)
 
-**Amazon API Gateway**:
-- REST API endpoints for all microservices
-- WebSocket API for sign language streaming
-- Request validation and transformation
-- API key management for rate limiting
-- CORS configuration for web clients
+**Option 2: DynamoDB** (if persistence needed):
+- Store user profiles, session history
+- On-demand billing
+- Cost: ~$1-2/month for hackathon usage
 
-**Features**:
-- Throttling: 1000 requests/second per user
-- Caching: 5-minute TTL for translation results
-- Custom domain with SSL certificate
-- CloudWatch integration for monitoring
+**Hackathon Choice**: In-memory storage, no separate database
 
-### 6.4 Database Layer
+### 6.6 Networking
 
-**Amazon DynamoDB**:
-- **Users Table**: User profiles, preferences, authentication
-  - Partition Key: user_id
-  - GSI: email for login
-  
-- **Translations Table**: Translation history
-  - Partition Key: user_id
-  - Sort Key: timestamp
-  - TTL: 90 days
-  
-- **Feedback Table**: User feedback and corrections
-  - Partition Key: feedback_id
-  - GSI: user_id for user-specific queries
+**VPC Configuration**:
+- Single VPC with public subnet
+- Security group: Allow ports 80, 443, 8000 (API), 22 (SSH)
+- Elastic IP for stable endpoint
+- Cost: $0 (free tier)
 
-**Amazon ElastiCache (Redis)**:
-- Translation result caching (TTL: 7 days)
-- Session management (JWT token blacklist)
-- Rate limiting counters
-- Real-time analytics aggregation
-
-**Configuration**:
-- DynamoDB: On-demand billing for variable workload
-- ElastiCache: cache.t3.medium cluster (2 nodes)
-- Automatic backups enabled
-
-### 6.5 Message Queue
-
-**Amazon SQS**:
-- **Document Processing Queue**: Async document pipeline
-- **TTS Generation Queue**: Background audio generation
-- **Analytics Queue**: Event collection for batch processing
-- **Dead Letter Queue**: Failed message handling
-
-**Configuration**:
-- Standard queues for most use cases
-- FIFO queue for ordered processing (if needed)
-- Visibility timeout: 5 minutes
-- Message retention: 4 days
-
-### 6.6 Monitoring & Logging
-
-**Amazon CloudWatch**:
-- Metrics: CPU, memory, GPU utilization, request latency
-- Logs: Application logs from all services
-- Alarms: Auto-scaling triggers, error rate alerts
-- Dashboards: Real-time system health visualization
-
-**AWS X-Ray**:
-- Distributed tracing across microservices
-- Performance bottleneck identification
-- Request flow visualization
+**Data Transfer**:
+- Inbound: Free
+- Outbound: First 100 GB free, then $0.09/GB
+- Estimated hackathon usage: <10 GB
+- Cost: $0
 
 ### 6.7 Deployment Strategy
 
-**Containerization**:
-- Docker containers for all microservices
-- Amazon ECR for container registry
-- Multi-stage builds for optimized image size
+**Simple Deployment** (Hackathon):
+1. Launch EC2 instance with custom AMI
+2. Pull Docker container from Docker Hub or ECR
+3. Run container with environment variables
+4. Configure security groups and Elastic IP
+5. Point domain to Elastic IP
 
-**Orchestration Options**:
+**CI/CD** (Optional):
+- GitHub Actions for automated deployment
+- Push to main branch → Build Docker image → Deploy to EC2
+- Overkill for hackathon, but good for demo
 
-**Option 1: Amazon ECS (Recommended for hackathon)**
-- Simpler setup, managed by AWS
-- Fargate for serverless containers (CPU services)
-- EC2 launch type for GPU services
-- Service auto-scaling and load balancing
+**Monitoring**:
+- CloudWatch for basic metrics (CPU, memory, network)
+- Application logs to CloudWatch Logs
+- Set up alarms for high CPU or errors
+- Cost: Free tier covers hackathon usage
 
-**Option 2: Amazon EKS (For production scale)**
-- Kubernetes for advanced orchestration
-- Better for complex multi-service deployments
-- Helm charts for package management
-- Higher operational complexity
+### 6.8 Total Infrastructure Cost
 
-**CI/CD Pipeline**:
-- GitHub Actions or AWS CodePipeline
-- Automated testing on pull requests
-- Blue-green deployment for zero downtime
-- Rollback capability for failed deployments
+**Hackathon (1 week of testing)**:
+- EC2 GPU (Spot): ~$15
+- EC2 CPU: ~$5
+- S3: <$1
+- API Gateway: <$1
+- Data Transfer: $0
+- **Total: ~$25-30**
 
-**Infrastructure as Code**:
-- Terraform or AWS CloudFormation
-- Version-controlled infrastructure
-- Reproducible environments (dev, staging, prod)
+**Monthly (if running 24/7)**:
+- EC2 GPU: ~$380
+- EC2 CPU: ~$30
+- S3: ~$1
+- API Gateway: ~$5
+- **Total: ~$420/month**
+
+**Cost Optimization**:
+- Use Spot Instances: Save 70% → ~$130/month
+- Run only during campus hours (8 AM - 6 PM): Save 60% → ~$170/month
+- Combined: ~$50-80/month for production
 
 
 ## 7. Scalability Plan
 
-### 7.1 Horizontal Scaling
+### 7.1 Handling Multiple Classrooms
 
-**Auto Scaling Policies**:
+**Current Capacity** (1 GPU instance):
+- Sign language recognition: ~10 FPS processing
+- Concurrent users: 5-8 simultaneous sessions
+- Bottleneck: GPU inference time
 
-**EC2 Auto Scaling Groups**:
-- **Target Tracking**: Maintain 70% CPU utilization
-- **Step Scaling**: Add 2 instances when queue depth >100
-- **Scheduled Scaling**: Scale up during peak hours (9 AM - 6 PM IST)
-- **Cooldown Period**: 5 minutes between scaling actions
+**Scaling Strategy**:
 
-**Lambda Concurrency**:
-- Reserved concurrency: 100 for critical functions
-- Provisioned concurrency: 10 for language detection (reduce cold starts)
-- Burst capacity: Up to 1000 concurrent executions
+**Horizontal Scaling**:
+- Add more EC2 GPU instances as needed
+- Load balancer distributes sessions across instances
+- Each instance handles 5-8 concurrent sessions
+- Linear scaling: 2 instances = 10-16 sessions
 
-**DynamoDB Auto Scaling**:
-- Target utilization: 70% of provisioned capacity
-- Scale up: When consumed capacity >70% for 2 minutes
-- Scale down: When consumed capacity <30% for 15 minutes
-- Min capacity: 5 RCU/WCU, Max: 1000 RCU/WCU
+**Session Affinity**:
+- Once a session starts, it stays on the same instance
+- Prevents model loading overhead
+- Implemented via sticky sessions in load balancer
 
-### 7.2 Load Balancing
+**Auto Scaling Policy**:
+- Metric: Average GPU utilization
+- Scale up: When GPU >75% for 2 minutes
+- Scale down: When GPU <30% for 10 minutes
+- Min instances: 1, Max instances: 5 (covers 25-40 classrooms)
 
-**Application Load Balancer (ALB)**:
-- Distributes traffic across EC2 instances
-- Health checks every 30 seconds
-- Sticky sessions for stateful services
-- SSL termination at load balancer
+**Cost Consideration**:
+- Start with 1 instance for pilot
+- Scale based on actual usage patterns
+- Most campuses won't need >2 instances initially
 
-**Target Groups**:
-- OCR Service: Round-robin distribution
-- Translation Service: Least outstanding requests
-- Sign Language Service: IP hash for WebSocket persistence
+### 7.2 Low-Latency Communication
 
-**Cross-Zone Load Balancing**:
-- Enabled for even distribution across AZs
-- Improves fault tolerance
+**Target Latency Breakdown**:
+- Video frame transmission: 100-200ms
+- Hand detection (MediaPipe): 30-50ms
+- LSTM inference: 50-100ms
+- Text transmission: 50-100ms
+- **Total: 230-450ms** (well under 2-second target)
 
-### 7.3 Caching Strategy
+**Optimization Techniques**:
 
-**Multi-layer Caching**:
+**Frame Compression**:
+- Compress frames before transmission (JPEG quality: 80)
+- Reduces bandwidth by 60-70%
+- Minimal impact on hand detection accuracy
 
-**Layer 1: CDN (CloudFront)**
-- Cache audio files at edge locations
-- TTL: 24 hours
-- Reduces S3 GET requests by 80%
+**Model Optimization**:
+- Use TorchScript for faster inference
+- Batch processing when possible (batch size: 4-8)
+- GPU memory management to avoid swapping
 
-**Layer 2: Application Cache (ElastiCache)**
-- Translation results: 7-day TTL
-- Language detection: 30-day TTL
-- User preferences: No expiration (invalidate on update)
+**Network Optimization**:
+- WebSocket for persistent connections (no HTTP overhead)
+- Binary data transfer instead of JSON for frames
+- CDN for static assets (frontend)
 
-**Layer 3: In-memory Cache**
-- Model weights cached in GPU memory
-- Frequently used translations in service memory
-- LRU eviction policy
+**Caching**:
+- Cache frequently recognized signs
+- Reduce redundant processing
+- In-memory cache on GPU instance
 
-**Cache Invalidation**:
-- Manual invalidation via API
-- Automatic on model updates
-- Version-based cache keys
+### 7.3 Horizontal Scaling of Sign Recognition Service
 
-### 7.4 Database Optimization
+**Microservice Architecture**:
 
-**DynamoDB Best Practices**:
-- Partition key design for even distribution
-- GSI for alternate query patterns
-- Batch operations for bulk reads/writes
-- DynamoDB Streams for change data capture
+**Service Separation**:
+1. **Sign Recognition Service**: GPU instances
+2. **Speech-to-Text Service**: CPU instances
+3. **TTS Service**: CPU instances or API calls
+4. **API Gateway**: Lightweight routing
 
-**Query Optimization**:
-- Use Query instead of Scan operations
-- Limit result set size with pagination
-- Project only required attributes
-- Use eventually consistent reads when possible
+**Benefits**:
+- Scale each service independently
+- Sign recognition needs GPU, others don't
+- Cost-efficient resource allocation
 
-### 7.5 Asynchronous Processing
+**Load Balancing Strategy**:
+- Round-robin for new sessions
+- Least-connections for optimal distribution
+- Health checks to avoid routing to overloaded instances
 
-**Queue-based Architecture**:
-- Decouple services with SQS
-- Process non-critical tasks asynchronously
-- Retry failed jobs with exponential backoff
-- Dead letter queue for manual intervention
+**State Management**:
+- Sessions are stateful (video stream continuity)
+- Use sticky sessions to maintain connection
+- Session data stored in Redis (shared across instances)
 
-**Background Jobs**:
-- TTS generation: Async with callback
-- Analytics aggregation: Batch processing every hour
-- Model retraining: Scheduled weekly jobs
+**Failover Handling**:
+- If instance fails, session reconnects to new instance
+- User sees brief interruption (<5 seconds)
+- Conversation history preserved in Redis
 
-### 7.6 Geographic Distribution
+### 7.4 Database Scaling (If Needed)
 
-**Multi-Region Deployment** (Future):
-- Primary region: ap-south-1 (Mumbai)
-- Secondary region: ap-southeast-1 (Singapore)
-- Route 53 latency-based routing
-- Cross-region S3 replication for models
+**Current Approach**: In-memory (Redis)
+- Fast, simple, sufficient for MVP
+- No persistence needed for real-time communication
 
-**Edge Computing**:
-- CloudFront edge locations for content delivery
-- Lambda@Edge for request routing
-- Reduced latency for global users
+**If Persistence Required**:
+- DynamoDB with on-demand billing
+- Auto-scales with traffic
+- No manual capacity planning
+
+**Data Model**:
+- Sessions: Partition key = session_id
+- User profiles: Partition key = user_id
+- Conversation history: Partition key = session_id, Sort key = timestamp
+
+### 7.5 Bandwidth Considerations
+
+**Per Session Bandwidth**:
+- Video upload: 10 FPS × 50 KB/frame = 500 KB/s = 4 Mbps
+- Audio upload: 16 kHz × 2 bytes = 32 KB/s = 256 Kbps
+- Text/results download: <10 KB/s = 80 Kbps
+- **Total per session: ~4.5 Mbps**
+
+**Campus Network**:
+- Typical campus WiFi: 50-100 Mbps per access point
+- Can support 10-20 concurrent sessions per AP
+- Recommend dedicated network for accessibility services
+
+**Optimization**:
+- Adaptive frame rate based on network conditions
+- Reduce resolution if bandwidth limited (480p sufficient)
+- Graceful degradation: Lower FPS if network congested
+
+### 7.6 Monitoring and Alerting
+
+**Key Metrics**:
+- Active sessions count
+- Average latency per pipeline stage
+- GPU utilization
+- Error rate (failed recognitions)
+- User satisfaction (feedback scores)
+
+**Alerts**:
+- High latency (>2 seconds): Investigate bottleneck
+- GPU >90%: Scale up
+- Error rate >10%: Check model or data quality
+- Instance health check failure: Auto-restart
+
+**Dashboard**:
+- Real-time session count
+- Latency graphs
+- Recognition accuracy trends
+- Cost tracking
 
 
 ## 8. Security Considerations
 
-### 8.1 Network Security
+### 8.1 Secure Video Streaming
 
-**HTTPS Everywhere**:
-- TLS 1.3 for all API communications
-- SSL certificates from AWS Certificate Manager
-- Enforce HTTPS with HTTP to HTTPS redirect
-- HSTS headers for browser security
+**WebSocket Security**:
+- Use WSS (WebSocket Secure) protocol, not WS
+- TLS 1.3 encryption for all video/audio streams
+- Prevents man-in-the-middle attacks
+- Certificate from Let's Encrypt (free)
 
-**VPC Configuration**:
-- Private subnets for backend services
-- Public subnets for load balancers only
-- NAT Gateway for outbound internet access
-- Security groups with least privilege rules
+**Video Privacy**:
+- No permanent storage of video frames
+- Frames processed in-memory and discarded immediately
+- Only text transcriptions stored (if user opts in)
+- Clear privacy policy displayed to users
 
-**Network ACLs**:
-- Deny all by default
-- Allow only required ports (443, 80, 22)
-- Restrict SSH access to bastion host
-- Block suspicious IP ranges
+**Session Isolation**:
+- Each session has unique ID (UUID)
+- Sessions cannot access each other's data
+- In-memory data cleared on session end
+- No cross-session data leakage
 
-### 8.2 Authentication & Authorization
+### 8.2 HTTPS for All APIs
 
-**User Authentication**:
-- JWT tokens for stateless authentication
-- Token expiration: 1 hour (access), 7 days (refresh)
-- Secure token storage (HttpOnly cookies)
-- Multi-factor authentication (optional)
+**SSL/TLS Configuration**:
+- HTTPS enforced for all REST API endpoints
+- HTTP requests automatically redirected to HTTPS
+- HSTS header to prevent downgrade attacks
+- Certificate auto-renewal with Certbot
 
-**IAM Roles & Policies**:
-- Separate roles for each service
+**API Gateway**:
+- Terminates SSL at gateway level
+- Backend communication within VPC (secure by default)
+- Custom domain with valid SSL certificate
+
+### 8.3 User Authentication
+
+**JWT-based Authentication**:
+
+**Registration/Login**:
+```
+POST /api/auth/register
+{
+  "email": "student@university.edu",
+  "password": "hashed_password",
+  "role": "student"  // or "faculty"
+}
+
+Response:
+{
+  "access_token": "eyJ...",
+  "refresh_token": "eyJ...",
+  "expires_in": 3600
+}
+```
+
+**Token Structure**:
+- Access token: 1-hour expiration
+- Refresh token: 7-day expiration
+- Stored in HttpOnly cookies (not localStorage)
+- Includes user_id, role, session_id
+
+**Protected Endpoints**:
+- All WebSocket connections require valid JWT
+- Token validated on connection establishment
+- Expired tokens rejected with 401 Unauthorized
+
+**Password Security**:
+- Bcrypt hashing with salt (cost factor: 12)
+- Minimum password length: 8 characters
+- No plain-text password storage
+
+### 8.4 Rate Limiting
+
+**API Rate Limits**:
+- Per user: 100 requests/minute
+- Per IP: 200 requests/minute
+- WebSocket connections: 5 concurrent per user
+- Prevents abuse and DoS attacks
+
+**Implementation**:
+- Token bucket algorithm
+- Redis for distributed rate limiting
+- 429 Too Many Requests response when exceeded
+
+### 8.5 Input Validation
+
+**Video Frame Validation**:
+- Maximum frame size: 2 MB
+- Allowed formats: JPEG, PNG only
+- Validate base64 encoding
+- Reject malformed data
+
+**Audio Validation**:
+- Maximum chunk size: 1 MB
+- Allowed formats: WAV, MP3
+- Sample rate: 16 kHz or 44.1 kHz
+- Reject suspicious audio files
+
+**Text Input Sanitization**:
+- Escape HTML/JavaScript in user text
+- Maximum text length: 1000 characters
+- Prevent SQL injection (use parameterized queries)
+- XSS protection
+
+### 8.6 Access Control
+
+**Role-based Access**:
+- Student role: Can create sessions, use all features
+- Faculty role: Same as student + view analytics
+- Admin role: Manage users, view all sessions
+
+**Session Access**:
+- Only session participants can access session data
+- Session creator can invite others via share link
+- Time-limited share links (expire in 24 hours)
+
+### 8.7 Data Privacy Compliance
+
+**GDPR/Data Protection**:
+- User consent for data collection
+- Right to access personal data
+- Right to delete account and data
+- Data retention policy: 90 days for conversation history
+
+**Campus Compliance**:
+- Comply with university data policies
+- Student data handled per FERPA guidelines (if US)
+- No sharing of data with third parties
+- Transparent privacy policy
+
+### 8.8 Infrastructure Security
+
+**EC2 Security**:
+- Security groups: Whitelist only required ports
+- SSH access: Key-based authentication only
+- Disable password authentication
+- Regular security updates (automated with unattended-upgrades)
+
+**IAM Roles**:
+- EC2 instance role for S3 access (no hardcoded credentials)
 - Principle of least privilege
-- No hardcoded credentials in code
-- Rotate access keys every 90 days
+- Separate roles for different services
+- Regular audit of permissions
 
-**API Security**:
-- API keys for third-party integrations
-- Rate limiting: 100 requests/minute per user
-- Request signing for sensitive operations
-- CORS policy restricting allowed origins
+**Secrets Management**:
+- AWS Secrets Manager for API keys
+- Environment variables for non-sensitive config
+- No secrets in code or Docker images
+- Rotate secrets every 90 days
 
-### 8.3 Data Encryption
-
-**Encryption at Rest**:
-- S3: Server-side encryption (SSE-S3 or SSE-KMS)
-- DynamoDB: Encryption enabled by default
-- EBS volumes: Encrypted with KMS keys
-- RDS (if used): Transparent data encryption
-
-**Encryption in Transit**:
-- TLS 1.3 for all API calls
-- Encrypted WebSocket connections (WSS)
-- VPC peering encrypted by default
-- S3 transfer acceleration with encryption
-
-**Key Management**:
-- AWS KMS for encryption key management
-- Automatic key rotation every year
-- Separate keys for different data types
-- Audit key usage with CloudTrail
-
-### 8.4 Secure File Handling
-
-**Upload Validation**:
-- File type whitelist (JPEG, PNG, PDF only)
-- File size limit: 10MB
-- Virus scanning with ClamAV or AWS GuardDuty
-- Content-type verification (not just extension)
-
-**Presigned URLs**:
-- Time-limited access (5 minutes)
-- Single-use tokens for uploads
-- IP address restriction (optional)
-- Automatic expiration
-
-**Data Retention**:
-- Automatic deletion after processing
-- User data deleted on account closure
-- Compliance with data protection laws
-- Audit logs retained for 1 year
-
-### 8.5 Application Security
-
-**Input Validation**:
-- Sanitize all user inputs
-- Parameterized queries (prevent SQL injection)
-- Escape special characters
-- Validate data types and ranges
-
-**Dependency Management**:
-- Regular security updates
-- Automated vulnerability scanning (Snyk, Dependabot)
-- Pin dependency versions
-- Review third-party libraries
-
-**Error Handling**:
-- Generic error messages to users
-- Detailed logs for debugging (no sensitive data)
-- Rate limiting on failed authentication
-- Prevent information disclosure
-
-### 8.6 Monitoring & Incident Response
-
-**Security Monitoring**:
-- AWS GuardDuty for threat detection
-- CloudTrail for API audit logs
-- VPC Flow Logs for network monitoring
-- Automated alerts for suspicious activity
-
-**Incident Response Plan**:
-- Automated incident detection
-- Escalation procedures
-- Backup and recovery procedures
-- Post-incident analysis
-
-### 8.7 Compliance
-
-**Data Privacy**:
-- GDPR compliance (if serving EU users)
-- India's Personal Data Protection Bill compliance
-- User consent for data processing
-- Right to data deletion
-
-**Audit & Logging**:
-- Comprehensive audit trails
-- Log retention: 1 year
-- Tamper-proof logs (write-once storage)
-- Regular security audits
+**Logging and Monitoring**:
+- CloudWatch Logs for all application logs
+- Log failed authentication attempts
+- Alert on suspicious activity
+- Retain logs for 30 days
 
 
-## 9. Estimated Implementation Cost (Prototype Level)
+## 9. Estimated Prototype Cost (Hackathon Level Only)
 
-### 9.1 Development Phase (3 months)
+### 9.1 Development Phase (2-3 months)
 
-**Team Composition**:
-- 2 Full-stack Developers: $15,000
-- 1 ML Engineer: $10,000
-- 1 DevOps Engineer: $8,000
-- 1 UI/UX Designer: $5,000
-- **Total Development Cost**: $38,000
+**Team Composition** (Student Team):
+- 2 Full-stack Developers (Frontend + Backend)
+- 1 ML Engineer (Model training and optimization)
+- 1 UI/UX Designer (Accessibility-focused design)
 
-### 9.2 AWS Infrastructure (Monthly)
+**Cost**: $0 (student project, no salaries)
+
+**Development Tools**:
+- GitHub: Free for students
+- VS Code: Free
+- Postman: Free tier
+- Figma: Free for students
+- **Total**: $0
+
+### 9.2 Cloud Infrastructure (Hackathon/Demo Phase)
+
+**AWS Costs for 1 Week of Testing**:
 
 **Compute**:
-- EC2 GPU (g4dn.xlarge): 4 instances × $0.526/hr × 730 hrs = $1,536
-- EC2 CPU (t3.medium): 4 instances × $0.0416/hr × 730 hrs = $121
-- Lambda: 1M requests/month = $0.20
-- **Subtotal**: $1,657/month
+- EC2 g4dn.xlarge (GPU): $0.526/hr × 40 hours = $21
+  - Run only during testing/demo (not 24/7)
+- EC2 t3.medium (CPU): $0.0416/hr × 40 hours = $1.66
+- **Subtotal**: $22.66
 
 **Storage**:
-- S3: 100 GB storage + 10,000 requests = $3
-- EBS: 500 GB SSD = $50
-- ECR: 50 GB container images = $5
-- **Subtotal**: $58/month
-
-**Database**:
-- DynamoDB: 10 GB storage + 1M read/write units = $25
-- ElastiCache (cache.t3.medium): 2 nodes × $0.068/hr × 730 hrs = $99
-- **Subtotal**: $124/month
+- S3: 1 GB storage + 1000 requests = $0.05
+- **Subtotal**: $0.05
 
 **Networking**:
-- Application Load Balancer: $16 + $0.008/LCU-hour = $25
-- Data Transfer: 500 GB out = $45
-- CloudFront: 100 GB + 1M requests = $10
-- **Subtotal**: $80/month
-
-**API & Services**:
-- API Gateway: 1M requests = $3.50
-- SQS: 1M requests = $0.40
-- CloudWatch: Logs + metrics = $10
-- **Subtotal**: $14/month
+- API Gateway: 10,000 requests = $0.035
+- Data Transfer: 5 GB = $0 (within free tier)
+- **Subtotal**: $0.04
 
 **Third-party APIs**:
-- Google TTS: 1M characters = $16
-- OpenAI GPT-4: 10M tokens = $150
-- **Subtotal**: $166/month
+- Google TTS: 10,000 characters = $0.16
+- Google Translate (optional): 100,000 characters = $2
+- **Subtotal**: $2.16
 
-**Total Monthly Infrastructure**: ~$2,100/month
+**Total Hackathon Cost**: ~$25
 
-**Prototype Phase (3 months)**: $6,300
+### 9.3 Model Training Costs
 
-### 9.3 Additional Costs
+**GPU for Training**:
+- Option 1: Use university GPU lab (Free)
+- Option 2: Google Colab Pro ($10/month)
+- Option 3: AWS EC2 g4dn.xlarge for 20 hours = $10.52
 
-**Domain & SSL**: $50/year
-**Development Tools**: $500 (GitHub, monitoring tools)
-**Testing & QA**: $2,000
-**Documentation**: $1,000
+**Dataset Collection**:
+- Use existing INCLUDE dataset (Free)
+- Collect custom campus signs with volunteers (Free)
 
-### 9.4 Total Prototype Cost
+**Total Training Cost**: $0-10
 
-**One-time Costs**: $41,850
-**Monthly Recurring**: $2,100
-**3-Month Prototype Total**: ~$48,150
+### 9.4 Domain and SSL
 
-### 9.5 Cost Optimization Strategies
+**Domain Name**: $10-15/year (e.g., isl-bridge.tech)
+**SSL Certificate**: Free (Let's Encrypt)
 
-**For Hackathon/MVP**:
-- Use AWS Free Tier where possible
-- Spot Instances for GPU workloads (70% savings)
-- Reduce instance count (1-2 per service)
-- Use open-source alternatives (Coqui TTS instead of Google)
-- Limit API calls with aggressive caching
+**Total**: $10-15 (one-time for hackathon)
 
-**Optimized Hackathon Budget**: ~$500-1,000/month
+### 9.5 Total Hackathon Budget
 
-### 9.6 Production Scale Cost (Projected)
+**Minimum Budget** (Using free resources):
+- AWS: $25
+- Domain: $10
+- **Total: $35**
 
-**Assumptions**: 10,000 daily active users, 50,000 translations/day
+**Comfortable Budget** (With some paid tools):
+- AWS: $50 (extra testing time)
+- Model training: $10
+- Domain: $15
+- Buffer: $25
+- **Total: $100**
 
-**Monthly Cost**: $8,000-12,000
-- Compute: $5,000
-- Storage & Database: $1,000
-- APIs: $1,500
-- Networking: $500
+### 9.6 Post-Hackathon Pilot (1 Month)
 
-**Revenue Model** (to offset costs):
-- Freemium: 10 translations/day free
-- Premium: $2.99/month unlimited
-- Enterprise API: $0.01 per translation
+**If Deploying for Campus Pilot**:
+
+**AWS (Running 12 hours/day, 5 days/week)**:
+- EC2 GPU: $0.526/hr × 240 hrs = $126
+- EC2 CPU: $0.0416/hr × 240 hrs = $10
+- S3: $1
+- API Gateway: $2
+- Third-party APIs: $20
+- **Total: ~$160/month**
+
+**Cost Optimization**:
+- Use Spot Instances: Save 70% → $50/month for GPU
+- Run only during class hours: Already factored in
+- Cache TTS results: Reduce API costs by 50%
+- **Optimized: ~$80-100/month**
+
+### 9.7 Funding Options
+
+**For Students**:
+- University innovation grants
+- Hackathon prize money
+- AWS Educate credits ($100-200 free credits)
+- GitHub Student Developer Pack (includes cloud credits)
+- Accessibility-focused grants and competitions
+
+**Sustainability**:
+- Partner with university disability services
+- Seek CSR funding from tech companies
+- Government accessibility grants
+- Crowdfunding for social impact
 
 
 ## 10. Future Enhancements
 
-### 10.1 AI Model Improvements
+### 10.1 Larger ISL Vocabulary
 
-**Offline Model Optimization**:
-- Quantize models to INT8 for 4x size reduction
-- Knowledge distillation for smaller student models
-- On-device inference with TensorFlow Lite
-- Progressive model download based on user needs
-- Target: <500MB app size with 5 language packs
+**Current Limitation**: 150 common campus signs
 
-**Handwritten Text Recognition**:
-- Fine-tune on IIIT-HWS dataset (Hindi, Tamil, Telugu handwriting)
-- CNN-RNN-CTC architecture for cursive text
-- Writer-independent recognition
-- Expected accuracy: 85-90% on clear handwriting
+**Expansion Plan**:
+- Phase 1: 500 signs (cover 90% of campus conversations)
+- Phase 2: 1000+ signs (comprehensive vocabulary)
+- Phase 3: Fingerspelling recognition (for names, technical terms)
 
-**Dialect Support**:
-- Extend to regional dialects (Awadhi, Bhojpuri, Hyderabadi)
-- Dialect-aware translation models
-- Crowdsource dialect data from communities
-- TTS voices with regional accents
+**Data Collection Strategy**:
+- Collaborate with deaf student associations
+- Partner with ISL training institutes
+- Crowdsource sign videos from community
+- Continuous learning from user corrections
 
-**Multimodal Understanding**:
-- Combine text and image context for better translation
-- Understand document layout (forms, tables, charts)
-- Extract structured data from documents
-- Visual question answering about documents
+**Technical Approach**:
+- Incremental model retraining
+- Transfer learning from existing model
+- Active learning: Prioritize signs users request most
+- Model versioning for backward compatibility
 
-### 10.2 Feature Expansions
+**Timeline**: 6-12 months for 500 signs
 
-**Real-time Camera Translation**:
-- Live translation overlay on camera feed
-- No need to capture image
-- Augmented reality text replacement
-- Works on signs, menus, documents
+### 10.2 Two-way Translation (Text-to-Sign Avatar)
 
-**Voice Input**:
-- Speech-to-text in regional languages
-- Voice commands for app navigation
-- Conversational AI for document Q&A
-- Hands-free operation for accessibility
+**Vision**: Animated avatar that performs ISL signs
 
-**Document Templates**:
-- Pre-filled government forms in regional languages
-- Smart form filling with user data
-- Template library for common documents
-- Export to PDF with digital signature
+**Use Case**:
+- Hearing person types text → Avatar signs it
+- Enables asynchronous communication
+- Useful for pre-recorded lectures, announcements
 
-**Collaborative Features**:
-- Share translations with family/friends
-- Community-contributed translations
-- Crowdsourced corrections for model improvement
-- Social features for learning
+**Technical Approach**:
+- 3D avatar with rigged hand and body model
+- Motion capture data from ISL signers
+- Text → Sign sequence mapping
+- Smooth animation interpolation
 
-### 10.3 Platform Integrations
+**Challenges**:
+- High-quality motion capture data needed
+- Complex animation pipeline
+- Facial expressions and body language important
+- Computationally intensive rendering
 
-**Government Portal Integration**:
-- DigiLocker API for document retrieval
-- Aadhaar authentication
-- Direct form submission to e-governance portals
-- Real-time status tracking
+**Alternative**: Video-based approach
+- Pre-record videos of common signs
+- Stitch videos together for sentences
+- Lower quality but faster to implement
 
-**Healthcare Integration**:
-- Hospital management system APIs
-- Prescription verification
-- Medicine reminder with audio
-- Telemedicine platform integration
+**Timeline**: 12-18 months (complex project)
 
-**Banking Integration**:
-- Account statement translation
-- Transaction categorization
-- Financial literacy content
-- Loan application assistance
+### 10.3 Offline Campus Deployment
 
-**Educational Platforms**:
-- LMS integration for multilingual content
-- Homework help in regional languages
-- Parent-teacher communication translation
-- Scholarship application assistance
+**Motivation**: Reduce latency and cloud costs
 
-### 10.4 Advanced Accessibility
+**Architecture**:
+- Edge server on campus network
+- All processing happens locally
+- No internet dependency
+- Lower latency (<500ms total)
 
-**Sign Language Enhancements**:
-- Expand to 500+ ISL signs
-- Regional sign language variations
-- Two-way translation (text to sign animation)
-- Sign language video call translation
+**Hardware Requirements**:
+- Server with NVIDIA GPU (e.g., RTX 3090)
+- 32 GB RAM
+- 1 TB SSD storage
+- Cost: ~$3000-5000 one-time
 
-**Visual Impairment Support**:
-- Screen reader optimization
-- Voice-first interface
-- Haptic feedback for navigation
-- Audio descriptions for images
+**Benefits**:
+- No monthly cloud costs
+- Better privacy (data never leaves campus)
+- Faster response times
+- Works during internet outages
 
-**Cognitive Accessibility**:
-- Simplified UI mode
-- Picture-based navigation
-- Text-to-pictogram conversion
-- Adjustable reading speed and complexity
+**Deployment Model**:
+- Docker containers on campus server
+- Accessible via campus WiFi
+- IT department manages infrastructure
+- Automatic updates via CI/CD
 
-### 10.5 Technical Improvements
+**Timeline**: 3-6 months after successful pilot
 
-**Edge Computing**:
-- Deploy models on edge devices
-- Reduce latency to <500ms
-- Offline-first architecture
-- Sync when connectivity available
+### 10.4 Mobile App
 
-**Blockchain for Verification**:
-- Document authenticity verification
-- Tamper-proof translation records
-- Decentralized identity management
-- Smart contracts for certified translations
+**Current**: Web-based (works on mobile browsers)
 
-**Advanced Analytics**:
-- User behavior analysis for UX improvement
-- A/B testing framework
-- Predictive analytics for resource allocation
-- Personalized recommendations
+**Native App Benefits**:
+- Better camera access and performance
+- Offline capability with on-device models
+- Push notifications for session invites
+- Background audio processing
 
-**API Platform**:
-- Public API for third-party developers
-- SDKs for mobile and web
-- Webhook support for integrations
-- Developer portal with documentation
+**Platforms**:
+- iOS (Swift/SwiftUI)
+- Android (Kotlin/Jetpack Compose)
+- React Native for cross-platform (faster development)
 
-### 10.6 Geographic Expansion
+**Features**:
+- Optimized video streaming
+- On-device hand detection (MediaPipe mobile)
+- Lightweight LSTM model for offline recognition
+- Sync with cloud for full vocabulary
 
-**International Markets**:
-- Expand to Nepal, Bangladesh, Sri Lanka
-- Support for their regional languages
-- Localized content and features
-- Partnership with local NGOs
+**Timeline**: 4-6 months
 
-**Domain Specialization**:
-- Legal document translation
-- Medical terminology specialization
-- Technical documentation translation
-- Academic content translation
+### 10.5 Multi-language Support
 
-### 10.7 Business Model Evolution
+**Current**: English and Hindi
 
-**B2B Solutions**:
-- Enterprise API for organizations
-- White-label solutions
-- Custom model training for specific domains
-- SLA-backed service guarantees
+**Expansion**:
+- Regional languages: Tamil, Telugu, Bengali, Marathi
+- Useful for regional campuses
+- Translation between ISL and regional languages
 
-**Government Partnerships**:
-- Integration with Digital India initiatives
-- Subsidized access for rural areas
-- Training programs for government staff
-- Data partnership for model improvement
+**Technical Approach**:
+- Integrate IndicTrans2 for better regional language support
+- Language-specific TTS voices
+- UI localization
 
-**Social Impact**:
-- Free tier for NGOs and social workers
-- Accessibility grants for underserved communities
-- Open-source core components
-- Research partnerships with universities
+**Timeline**: 2-3 months per language
+
+### 10.6 Classroom Integration Features
+
+**Lecture Recording with Captions**:
+- Record lectures with automatic ISL/speech transcription
+- Generate searchable transcripts
+- Useful for all students, not just deaf students
+
+**Presentation Mode**:
+- Display captions on projector screen
+- Large font for visibility from back of class
+- Speaker identification for multi-speaker discussions
+
+**Group Discussion Support**:
+- Multi-user sessions (3-5 participants)
+- Speaker diarization (who said what)
+- Conversation threading
+
+**Assignment Submission**:
+- Students can submit video assignments in ISL
+- Automatic transcription for faculty review
+- Reduces barrier for deaf students
+
+**Timeline**: 6-9 months
+
+### 10.7 Analytics and Insights
+
+**For Students**:
+- Track communication patterns
+- Identify frequently used signs
+- Personalized vocabulary recommendations
+
+**For Faculty**:
+- Understand deaf student participation
+- Identify communication barriers
+- Improve teaching strategies
+
+**For Administrators**:
+- Measure accessibility program impact
+- Usage statistics across campus
+- ROI analysis for funding justification
+
+**Privacy-preserving Analytics**:
+- Aggregate data only, no individual tracking
+- Opt-in for detailed analytics
+- Anonymized data for research
+
+**Timeline**: 3-4 months
+
+### 10.8 Integration with Learning Management Systems
+
+**LMS Integration** (Moodle, Canvas, Blackboard):
+- Embed ISL assistant in LMS
+- Accessible from course pages
+- Integrate with assignment submissions
+- Single sign-on with university credentials
+
+**Benefits**:
+- Seamless user experience
+- No separate login required
+- Centralized accessibility tools
+
+**Timeline**: 2-3 months per LMS
+
+### 10.9 Research and Continuous Improvement
+
+**Model Improvement**:
+- Collect user feedback on recognition accuracy
+- Retrain models with corrected data
+- A/B test new model versions
+- Publish research papers on ISL recognition
+
+**User Studies**:
+- Conduct usability studies with deaf students
+- Measure impact on academic performance
+- Gather qualitative feedback
+- Iterate on UX design
+
+**Open Source Contribution**:
+- Release ISL dataset for research community
+- Open-source core recognition models
+- Collaborate with other universities
+- Build ecosystem of ISL tools
+
+**Timeline**: Ongoing
 
 ---
 
-**Document Version**: 2.0  
+**Document Version**: 1.0  
 **Last Updated**: February 11, 2026  
-**Project**: BharatBridge AI - Complete System Design  
-**Status**: Hackathon Submission Ready
-
-
+**Project**: ISL Communication Bridge for Indian Campuses  
+**Status**: Hackathon Design Document  
+**Target**: Realistic prototype with clear path to production
